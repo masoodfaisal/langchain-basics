@@ -1,0 +1,15 @@
+{
+  "python_version": "3.13",
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./agent.py:graph"
+  },
+  "env": "./.env",
+  "store": {
+    "index": {
+      "embed": "./embeddings.py:embed",
+      "dims": 768,
+      "fields": ["text"]
+    }
+  }
+}

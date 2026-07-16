@@ -1,0 +1,30 @@
+[project]
+name = "agent"
+version = "0.1.0"
+description = "LangChain agent with MCP tools"
+requires-python = "==3.13.*"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+# This repository intentionally uses a flat module layout.  Be explicit so
+# deployment builds do not mistake data directories such as ``resources`` for
+# Python packages during editable installation.
+[tool.setuptools]
+py-modules = [
+    "agent",
+    "context",
+    "db",
+    "embeddings",
+    "memory",
+    "middleware",
+    "tools",
+]
+packages = ["evals"]
+
+[tool.pytest.ini_options]
+markers = [
+    "e2e: end-to-end tests that require a running 'langgraph dev' server (auto-skipped when no server is reachable)",
+]
+asyncio_mode = "auto"

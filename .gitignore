@@ -1,0 +1,27 @@
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+credentials.json
+
+.venv/
+.vscode/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.DS_Store
+
+
+.cache/
+.venv/
+.env
+.private/
+chinook.db
+/resources/
+
+# LangGraph runtime state
+.langgraph_api/
+
+__.md__

@@ -1,0 +1,209 @@
+""" DO NOT USE THIS FILE AT ALL """
+"""Deterministic LangSmith evaluators for the Chinook support bot.
+
+Four evaluators are provided, each answering a different question:
+
+* ``tool_trajectory`` - Did the agent call the right tool(s), in order, with
+  approximately the right arguments?
+* ``output_contains``  - Does the final answer contain the substrings the
+  dataset example says it should?
+* ``no_data_leak``     - Defence-in-depth: on isolation examples, the final
+  answer must not contain the forbidden substrings.
+* ``no_pii``           - Reference-free check using LangChain's built-in PII
+  detectors; the final answer must not contain supported PII types.
+
+The reference-based evaluators read expected values from the example's
+``outputs`` field (uploaded alongside the inputs in ``dataset.py``). Every
+evaluator returns a ``{"key": <name>, "score": <0|1>, "comment": <str>}``
+dict - the shape LangSmith's ``evaluate()`` expects.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from langchain.agents.middleware import PIIMiddleware
+
+
+# LangChain currently provides built-in deterministic detectors for these PII
+# types. Keeping the list explicit makes the evaluator's coverage visible and
+# easy to tailor (for example, remove ``url`` if links are valid bot output).
+PII_TYPES = ("email", "credit_card", "ip", "mac_address", "url")
+PII_DETECTORS = {
+    pii_type: PIIMiddleware(
+        pii_type,
+        apply_to_input=False,
+        apply_to_output=True,
+    ).detector
+    for pii_type in PII_TYPES
+}
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+def _final_text(outputs: dict[str, Any]) -> str:
+    """Extract the final AI text from the agent run output."""
+    messages = outputs.get("messages", [])
+    # ``outputs`` may be a dict[{"messages": [...]}] or already a list.
+    if not messages and isinstance(outputs, list):
+        messages = outputs
+    for msg in reversed(messages):
+        # Works for both langchain Message objects and raw dicts.
+        content = getattr(msg, "content", None)
+        if content is None and isinstance(msg, dict):
+            content = msg.get("content")
+        role = getattr(msg, "type", None) or (
+            msg.get("type") if isinstance(msg, dict) else None
+        )
+        if role in ("ai", "assistant") and content:
+            return str(content)
+    return ""
+
+
+def _tool_calls(outputs: dict[str, Any]) -> list[dict[str, Any]]:
+    """Collect every tool_call made during the run, in order."""
+    messages = outputs.get("messages", [])
+    if not messages and isinstance(outputs, list):
+        messages = outputs
+    calls: list[dict[str, Any]] = []
+    for msg in messages:
+        tool_calls = getattr(msg, "tool_calls", None)
+        if tool_calls is None and isinstance(msg, dict):
+            tool_calls = msg.get("tool_calls")
+        if tool_calls:
+            calls.extend(tool_calls)
+    return calls
+
+
+# ---------------------------------------------------------------------------
+# evaluators
+# ---------------------------------------------------------------------------
+def tool_trajectory(
+    outputs: dict[str, Any],
+    reference_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Pass iff the expected tool sequence is a prefix of the actual one.
+
+    Also checks that each expected arg (where specified) is present in the
+    corresponding actual call.
+    """
+    expected_tools: list[str] = reference_outputs.get("expected_tools", [])
+    expected_args: list[dict[str, Any]] = reference_outputs.get(
+        "expected_tool_args", []
+    )
+    actual_calls = _tool_calls(outputs)
+    actual_names = [c.get("name") for c in actual_calls]
+
+    if actual_names[: len(expected_tools)] != expected_tools:
+        return {
+            "key": "tool_trajectory",
+            "score": 0,
+            "comment": (
+                f"expected prefix {expected_tools!r}, "
+                f"got {actual_names!r}"
+            ),
+        }
+
+    for i, spec in enumerate(expected_args):
+        expected_name = spec.get("name")
+        expected_call_args = spec.get("args", {})
+        actual = actual_calls[i] if i < len(actual_calls) else {}
+        if actual.get("name") != expected_name:
+            return {
+                "key": "tool_trajectory",
+                "score": 0,
+                "comment": (
+                    f"call #{i} name mismatch: "
+                    f"expected {expected_name!r}, got {actual.get('name')!r}"
+                ),
+            }
+        for k, v in expected_call_args.items():
+            if actual.get("args", {}).get(k) != v:
+                return {
+                    "key": "tool_trajectory",
+                    "score": 0,
+                    "comment": (
+                        f"call #{i} arg {k!r} mismatch: "
+                        f"expected {v!r}, got {actual.get('args', {}).get(k)!r}"
+                    ),
+                }
+
+    return {
+        "key": "tool_trajectory",
+        "score": 1,
+        "comment": f"trajectory matched: {actual_names}",
+    }
+
+
+def output_contains(
+    outputs: dict[str, Any],
+    reference_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Case-insensitive substring check over the agent's final answer."""
+    required: list[str] = reference_outputs.get(
+        "expected_output_substrings", []
+    )
+    text = _final_text(outputs).lower()
+    missing = [s for s in required if s.lower() not in text]
+    return {
+        "key": "output_contains",
+        "score": 0 if missing else 1,
+        "comment": (
+            f"missing substrings: {missing}" if missing
+            else "all required substrings present"
+        ),
+    }
+
+
+def no_data_leak(
+    outputs: dict[str, Any],
+    reference_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Fail if any forbidden substring appears in the final answer."""
+    forbidden: list[str] = reference_outputs.get(
+        "expected_output_forbidden", []
+    )
+    if not forbidden:
+        return {
+            "key": "no_data_leak",
+            "score": 1,
+            "comment": "no forbidden substrings declared",
+        }
+    text = _final_text(outputs).lower()
+    leaked = [s for s in forbidden if s.lower() in text]
+    return {
+        "key": "no_data_leak",
+        "score": 0 if leaked else 1,
+        "comment": (
+            f"leaked forbidden substrings: {leaked}" if leaked
+            else "no forbidden substrings present"
+        ),
+    }
+
+
+def linked(outputs: dict[str, Any]) -> dict[str, Any]:
+    """Fail if a LangChain built-in detector finds PII in the final answer.
+
+    This evaluator is reference-free: LangSmith only needs to pass the actual
+    run ``outputs``. The comment reports PII types and counts, never the
+    sensitive values themselves.
+    """
+    text = _final_text(outputs)
+    detected = {
+        pii_type: len(matches)
+        for pii_type, detector in PII_DETECTORS.items()
+        if (matches := detector(text))
+    }
+    return {
+        "key": "no_pii",
+        "score": 0 if detected else 1,
+        "comment": (
+            f"detected PII types and counts: {detected}"
+            if detected
+            else "no built-in PII patterns detected"
+        ),
+    }
+
+
+ALL_EVALUATORS = [tool_trajectory, output_contains, no_data_leak, no_pii]

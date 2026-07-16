@@ -1,0 +1,156 @@
+"""Run the Chinook support bot eval set against LangSmith.
+
+Uploads (or updates) a dataset, then runs the compiled agent against each
+example asynchronously. Reusable evaluators bound to the dataset score each
+new experiment automatically.
+
+Usage (from project root):
+
+    PYTHONPATH=. .venv/bin/python evals/run_eval.py
+    PYTHONPATH=. .venv/bin/python evals/run_eval.py --dataset-name my-chinook-eval
+
+Requires ``LANGSMITH_API_KEY`` and a model provider key in the environment
+(see .env.example).
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+# Make sure the project root is on sys.path so ``agent``/``context`` import
+# correctly when this script is run directly (e.g. ``python evals/run_eval.py``
+# or ``python run_eval.py`` from inside the evals/ folder).
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from dotenv import load_dotenv
+
+# Load .env from the project root so LANGSMITH_API_KEY and model provider
+# settings are available when this script is run directly (langgraph dev
+# does this automatically via langgraph.json).
+load_dotenv(PROJECT_ROOT / ".env")
+
+from langsmith import Client, aevaluate
+
+from agent import graph
+from context import UserContext
+from evals.dataset import to_langsmith_examples
+from evals.helpers import final_text, pii_counts
+
+DEFAULT_DATASET_NAME = "chinook-support-bot"
+
+
+def upsert_dataset(client: Client, name: str, description: str) -> str:
+    """Create or replace a dataset with the examples from ``dataset.py``.
+
+    Returns the dataset id.
+    """
+    existing = list(client.list_datasets(dataset_name=name))
+    if existing:
+        dataset = existing[0]
+        # Wipe existing examples so re-runs always reflect the current file.
+        for ex in client.list_examples(dataset_id=dataset.id):
+            client.delete_example(ex.id)
+    else:
+        dataset = client.create_dataset(dataset_name=name, description=description)
+
+    rows = to_langsmith_examples()
+    client.create_examples(
+        dataset_id=dataset.id,
+        inputs=[r["inputs"] for r in rows],
+        outputs=[r["outputs"] for r in rows],
+        metadata=[r["metadata"] for r in rows],
+    )
+    return str(dataset.id)
+
+
+async def atarget(inputs: dict[str, Any]) -> dict[str, Any]:
+    """LangSmith async target: run the agent for one example.
+
+    ``inputs`` comes straight from the dataset (``question`` + ``context``).
+    """
+    question = inputs["question"]
+    context = inputs.get("context") or {}
+    result = await graph.ainvoke(
+        {"messages": [{"role": "user", "content": question}]},
+        context=UserContext(**context),
+    )
+    # ``answer`` gives reusable LLM judges a stable scalar output path while
+    # ``messages`` remains available to trajectory and deterministic scorers.
+    answer = final_text(result)
+    return {
+        **result,
+        "answer": answer,
+        # Only categories and counts leave the process; matched PII values do not.
+        "pii_counts": pii_counts(answer),
+    }
+
+
+async def amain(args: argparse.Namespace) -> int:
+    if not os.getenv("LANGSMITH_API_KEY"):
+        print(
+            "LANGSMITH_API_KEY is not set. Put it in .env (see .env.example).",
+            file=sys.stderr,
+        )
+        return 2
+
+    client = Client()
+    if not args.no_upload:
+        dataset_id = upsert_dataset(
+            client,
+            args.dataset_name,
+            description=(
+                "Chinook customer-support agent examples. Tests music "
+                "discovery, order lookup, and customer-scoping middleware."
+            ),
+        )
+        print(f"Upserted dataset {args.dataset_name} (id={dataset_id})")
+        if args.upload_only:
+            return 0
+
+    experiment = await aevaluate(
+        atarget,
+        data=args.dataset_name,
+        experiment_prefix=args.experiment_prefix,
+    )
+    print(f"Experiment complete: {experiment}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--dataset-name",
+        default=os.getenv("CHINOOK_DATASET_NAME", DEFAULT_DATASET_NAME),
+    )
+    parser.add_argument(
+        "--experiment-prefix",
+        default="chinook-support-bot",
+        help="Prefix used for the experiment name shown in LangSmith.",
+    )
+    upload_group = parser.add_mutually_exclusive_group()
+    upload_group.add_argument(
+        "--no-upload",
+        action="store_true",
+        help=(
+            "Skip (re)uploading the dataset. Useful when the dataset was "
+            "curated in the UI and you only want to run evaluators."
+        ),
+    )
+    upload_group.add_argument(
+        "--upload-only",
+        action="store_true",
+        help="Upload the dataset examples without running an experiment.",
+    )
+    args = parser.parse_args()
+    return asyncio.run(amain(args))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

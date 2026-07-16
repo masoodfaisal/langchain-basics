@@ -1,0 +1,18 @@
+langchain~=1.2
+langchain-openai~=1.2
+langchain-mcp-adapters~=0.2
+langgraph~=1.1
+langgraph-checkpoint-sqlite~=3.0
+langgraph-cli~=0.4
+fastapi~=0.136
+uvicorn[standard]~=0.38
+typing_extensions~=4.15
+langgraph-cli[inmem]
+# Added for the Chinook support bot demo
+langchain-community~=0.4
+langsmith>=0.9.8,<1.0
+pytest~=8.3
+pytest-asyncio~=0.24
+# Async SQLite for the agent's DB layer (db.py / tools.py / middleware.py).
+aiosqlite~=0.22
+fastembed>=0.7,<1.0
