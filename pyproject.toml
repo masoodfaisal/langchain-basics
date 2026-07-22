@@ -8,6 +8,11 @@ dynamic = ["dependencies"]
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }
 
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.13"
+
 # This repository intentionally uses a flat module layout.  Be explicit so
 # deployment builds do not mistake data directories such as ``resources`` for
 # Python packages during editable installation.

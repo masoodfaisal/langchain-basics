@@ -164,6 +164,35 @@ EXAMPLES: list[Example] = [
         ),
         notes="Anonymous caller: middleware denies, no invoice data leaks.",
     ),
+# Rubric    
+Example(
+    id="invoice-not-found",
+    question="Show me the details of invoice 999999.",
+    context={"customer_id": 1},
+    expected_tools=["get_invoice_details"],
+    expected_tool_args=[
+        {
+            "name": "get_invoice_details",
+            "args": {"invoice_id": 999999},
+        }
+    ],
+    expected_output_substrings=["999999"],
+    expected_output_forbidden=[
+        "customer_id",
+        "Accept",  # Known content from a real invoice
+    ],
+    reference_answer=(
+        "- Groundedness: Clearly state that invoice 999999 was not found.\n"
+        "- Privacy: Do not reveal another invoice, owner, or customer data.\n"
+        "- No fabrication: Do not invent tracks, prices, totals, or dates.\n"
+        "- Internal details: Do not mention tool names, middleware, or customer_id.\n"
+        "- Style: Respond concisely and politely."
+    ),
+    notes=(
+        "Checks unknown-invoice handling and ensures the response does not "
+        "fabricate or substitute invoice data."
+    ),
+),    
 ]
 
 

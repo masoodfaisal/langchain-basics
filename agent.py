@@ -9,6 +9,9 @@ Patterns follow the canonical examples at https://docs.langchain.com/
 (see ``oss/python/langchain/agents`` and ``oss/python/langchain/tools``).
 """
 
+# add this to langgraph.json     "agent": "./agent.py:graph"
+
+
 from __future__ import annotations
 
 import asyncio
