@@ -165,3 +165,19 @@ Both workflows require `LANGSMITH_API_KEY`. The offline workflow scores tool
 trajectory, required output, data leakage, PII, correctness, and conciseness.
 The online evaluator checks live traces for valid responses, appropriate account
 tool use, internal-detail exposure, PII, and known invoice-data leakage.
+
+
+```bash
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_TRACING=true
+LANGSMITH_PROJECT="XXX"
+LANGSMITH_WORKSPACE_ID=XXXXX
+OPENAI_BASE_URL=XXX
+EMBEDDING_MODEL_NAME=BAAI/bge-base-en-v1.5
+EMBEDDING_CACHE_DIR=.cache/fastembed
+MODEL_NAME=gpt-5.4-mini
+LANGSMITH_DEPLOYMENT_NAME='XXX'
+OPENAI_BASE_URL=XXXX
+# Set LANGSMITH_API_KEY in your shell, not here.
+# Set OPENAI_API_KEY in your shell, not here.
+```
