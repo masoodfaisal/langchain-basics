@@ -65,20 +65,28 @@ can persist across threads without being shared between customers.
 
 ## Setup
 
-Create and activate a virtual environment, then install the existing project
-dependencies:
+Install Python 3.13 and ensure `python3.13` is available on `PATH`. Then run the
+setup script to create `.venv`, safely install the Python dependencies,
+provision the Chinook SQLite database, and validate the complete environment:
 
 ```bash
-python3.13 -m venv .venv
-source .venv/bin/activate
-sfw pip install -r requirements.txt
+./scripts/setup.sh
 ```
 
-Create the local Chinook database:
+The installer is idempotent. Use its validation-only mode to diagnose an
+existing setup without changing files or accessing the network:
 
 ```bash
-python scripts/bootstrap_chinook.py
+./scripts/setup.sh --check-only
 ```
+
+Use `./scripts/setup.sh --force-db` to replace the local database with a fresh
+copy. `VENV_DIR` and `CHINOOK_DB_PATH` can override the defaults. Dependency
+downloads are protected by
+[Socket Firewall Free (`sfw`)](https://github.com/SocketDev/sfw-free), which
+must be available on `PATH`.
+
+After setup, activate the environment with `source .venv/bin/activate`.
 
 Configure the model endpoint in `.env` or export the values from your shell.
 Do not commit `.env` or secret values.
