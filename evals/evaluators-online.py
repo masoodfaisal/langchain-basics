@@ -57,6 +57,7 @@ TOOL_NAMES = (
     "get_invoice_details",
     "remember",
     "recall",
+    "ask_music_expert",
 )
 
 # Invoice #1 belongs to customer 2 in the demo dataset. These are deliberately

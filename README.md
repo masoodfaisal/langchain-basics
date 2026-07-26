@@ -11,7 +11,7 @@ retain customer preferences across conversation threads.
 | --- | --- | --- |
 | Agent graph | `agent.py` | Configures the chat model, system prompt, tools, request context, and middleware, then exports the `graph` used by LangGraph. |
 | Invocation context | `context.py` | Defines `UserContext`, which carries the authenticated `customer_id` into each request. |
-| Agent tools | `tools.py` | Provides six async tools for music discovery, order support, and long-term memory. |
+| Agent tools | `tools.py` | Provides seven async tools for music discovery, order support, long-term memory, and delegated music reasoning. |
 | Authorization middleware | `middleware.py` | Blocks anonymous account access and prevents customers from reading invoices belonging to another customer. |
 | Database layer | `db.py` | Opens async SQLite connections and resolves the configurable Chinook database path. |
 | Long-term memory | `memory.py` | Wraps the LangGraph store and isolates saved memories in per-customer namespaces. |
@@ -21,11 +21,12 @@ retain customer preferences across conversation threads.
 | Evaluations | `evals/` | Defines the evaluation dataset plus offline experiment and online guardrail evaluators for LangSmith. |
 | Tests | `tests/` | Covers tools, authorization, memory isolation, checkpointing, evaluators, and optional server-backed memory flows. |
 
-The six tools are grouped by capability:
+The seven tools are grouped by capability:
 
 - Music discovery: `find_similar_albums`, `popular_in_genre`
 - Account support: `list_my_orders`, `get_invoice_details`
 - Long-term memory: `remember`, `recall`
+- LLM delegation: `ask_music_expert`
 
 ## Architecture
 
@@ -102,6 +103,10 @@ Optional configuration:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `OPENAI_VERIFY_SSL` | `true` | Set to `false` only for a trusted development gateway using a self-signed certificate. |
+| `TOOL_LLM_MODEL` | value of `MODEL_NAME` | Selects the secondary model called by `ask_music_expert`. |
+| `TOOL_LLM_API_KEY` | value of `OPENAI_API_KEY` | Overrides the API key for the secondary model. |
+| `TOOL_LLM_BASE_URL` | value of `OPENAI_BASE_URL` | Overrides the gateway for the secondary model. |
+| `TOOL_LLM_VERIFY_SSL` | value of `OPENAI_VERIFY_SSL` | Controls TLS verification for the secondary model gateway. |
 | `CHINOOK_DB_PATH` | `chinook.db` | Overrides the SQLite database location. |
 | `EMBEDDING_MODEL_NAME` | `BAAI/bge-base-en-v1.5` | Selects the local FastEmbed model. Its output must match the 768 dimensions configured in `langgraph.json`. |
 | `EMBEDDING_CACHE_DIR` | `.cache/fastembed` | Changes the local embedding-model cache directory. |

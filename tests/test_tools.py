@@ -3,7 +3,7 @@
 These tests exercise the tools directly (bypassing the LLM) against the
 local ``chinook.db``. They cover:
 
-* Happy paths for all four tools.
+* Happy paths for the catalog, account, and nested-LLM tools.
 * Both inline refusal paths (anonymous + wrong-owner).
 * Edge cases: unknown album, unknown genre, missing invoice.
 
@@ -29,6 +29,7 @@ from pydantic import ValidationError
 
 from context import UserContext
 from tools import (
+    ask_music_expert,
     find_similar_albums,
     get_invoice_details,
     list_my_orders,
@@ -210,3 +211,38 @@ def test_tool_schema_declares_required_arg(tool, required_arg):
     schema = tool.args_schema.model_json_schema()
     assert required_arg in schema["properties"]
     assert required_arg in schema.get("required", [])
+
+
+# ---------------------------------------------------------------------------
+# ask_music_expert (nested LLM call)
+# ---------------------------------------------------------------------------
+async def test_ask_music_expert_calls_secondary_model(monkeypatch):
+    class FakeResponse:
+        text = "Jazz commonly uses improvisation and syncopation."
+
+    class FakeModel:
+        def __init__(self):
+            self.messages = None
+
+        async def ainvoke(self, messages):
+            self.messages = messages
+            return FakeResponse()
+
+    fake_model = FakeModel()
+    monkeypatch.setattr("tools.music_expert_model", fake_model)
+
+    out = await ask_music_expert.ainvoke(
+        {"question": "What makes jazz sound like jazz?"}
+    )
+
+    assert out == FakeResponse.text
+    assert fake_model.messages[-1] == (
+        "human",
+        "What makes jazz sound like jazz?",
+    )
+
+
+def test_ask_music_expert_schema_requires_question():
+    schema = ask_music_expert.args_schema.model_json_schema()
+    assert "question" in schema["properties"]
+    assert "question" in schema.get("required", [])

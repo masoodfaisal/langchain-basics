@@ -1,6 +1,6 @@
 """Tools exposed to the Chinook customer support agent.
 
-Three areas, six tools:
+Four areas, seven tools:
 
 Music discovery
     * ``find_similar_albums`` - albums that share genres with a given album.
@@ -14,6 +14,9 @@ Long-term memory (per-customer, cross-thread)
     * ``remember``            - save a durable fact about the customer.
     * ``recall``              - search the customer's saved memories.
 
+LLM delegation
+    * ``ask_music_expert``    - ask a second LLM for music expertise.
+
 The account and memory tools read ``runtime.context.customer_id`` (see
 ``context.py``) so they never trust a customer id passed in by the model.
 The memory tools also read ``runtime.store`` (the LangGraph store the
@@ -25,9 +28,12 @@ loop. Sync callers must use ``await`` / ``ainvoke`` (see tests for examples).
 
 from __future__ import annotations
 
+import os
 from typing import Annotated
 
+import httpx
 from langchain.tools import ToolRuntime, tool
+from langchain_openai import ChatOpenAI
 from pydantic import Field
 
 from context import UserContext
@@ -36,6 +42,30 @@ from memory import Memo
 
 
 MAX_LIMIT = 50
+
+# This model is deliberately separate from the agent model in ``agent.py``.
+# Its settings fall back to the primary model settings, while TOOL_LLM_*
+# variables allow the tool to call a different model or gateway.
+_tool_llm_verify_env = os.getenv(
+    "TOOL_LLM_VERIFY_SSL", os.getenv("OPENAI_VERIFY_SSL", "true")
+).strip().lower()
+_tool_llm_http_async_client = httpx.AsyncClient(
+    verify=_tool_llm_verify_env not in {"false", "0", "no"}
+)
+music_expert_model = ChatOpenAI(
+    openai_api_key=os.getenv(
+        "TOOL_LLM_API_KEY", os.getenv("OPENAI_API_KEY", "sk-123456")
+    ),
+    openai_api_base=os.getenv(
+        "TOOL_LLM_BASE_URL",
+        os.getenv("OPENAI_BASE_URL", "http://ai-gateway:4000"),
+    ),
+    model_name=os.getenv(
+        "TOOL_LLM_MODEL", os.getenv("MODEL_NAME", "llama-distributed")
+    ),
+    temperature=0.01,
+    http_async_client=_tool_llm_http_async_client,
+)
 
 # Reusable annotated type for paginated tool args. Pydantic enforces the
 # bounds before our function body runs, and ``@tool`` surfaces validation
@@ -334,6 +364,35 @@ async def recall(
     return "\n".join(f"  - {h.value.get('text', h.value)}" for h in hits)
 
 
+# ---------------------------------------------------------------------------
+# LLM delegation
+# ---------------------------------------------------------------------------
+@tool
+async def ask_music_expert(question: str) -> str:
+    """Ask a second LLM to explain a music-related topic.
+
+    Use this for music concepts, comparisons, and recommendation rationale
+    that benefit from specialist reasoning. Do not use it for Chinook orders,
+    customer data, or claims about what is currently in the Chinook catalog.
+
+    Args:
+        question: A self-contained, music-related question for the specialist.
+    """
+    response = await music_expert_model.ainvoke(
+        [
+            (
+                "system",
+                "You are a concise music expert supporting a digital music "
+                "store agent. Answer only the music-related question. Do not "
+                "claim access to the store catalog, customer data, current "
+                "events, or external tools.",
+            ),
+            ("human", question),
+        ]
+    )
+    return response.text
+
+
 ALL_TOOLS = [
     find_similar_albums,
     popular_in_genre,
@@ -341,4 +400,5 @@ ALL_TOOLS = [
     get_invoice_details,
     remember,
     recall,
+    ask_music_expert,
 ]
