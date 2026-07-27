@@ -60,7 +60,6 @@ can persist across threads without being shared between customers.
 ## Requirements
 
 - Python 3.13
-- [Socket Firewall Free (`sfw`)](https://github.com/SocketDev/sfw-free)
 - An OpenAI-compatible chat-completions endpoint
 - `OPENAI_API_KEY` available in the shell
 - A LangSmith account and key only if running the evaluation workflows
@@ -75,16 +74,16 @@ can persist across threads without being shared between customers.
    python3.13 -m venv .venv
    ```
 
-3. Install the Python dependencies:
-
-   ```bash
-   sfw .venv/bin/python -m pip install --requirement requirements.txt
-   ```
-
-4. Activate the environment:
+3. Activate the environment:
 
    ```bash
    source .venv/bin/activate
+   ```
+
+4. Install the Python dependencies:
+
+   ```bash
+   pip3 install --requirement requirements.txt
    ```
 
 Provision the Chinook SQLite database for a fresh checkout:
