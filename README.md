@@ -60,34 +60,38 @@ can persist across threads without being shared between customers.
 ## Requirements
 
 - Python 3.13
+- [Socket Firewall Free (`sfw`)](https://github.com/SocketDev/sfw-free)
 - An OpenAI-compatible chat-completions endpoint
 - `OPENAI_API_KEY` available in the shell
 - A LangSmith account and key only if running the evaluation workflows
 
 ## Setup
 
-Install Python 3.13 and ensure `python3.13` is available on `PATH`. Then run the
-setup script to create `.venv`, safely install the Python dependencies,
-provision the Chinook SQLite database, and validate the complete environment:
+1. Install Python 3.13 and ensure `python3.13` is available on `PATH`.
+
+2. Create the virtual environment:
+
+   ```bash
+   python3.13 -m venv .venv
+   ```
+
+3. Install the Python dependencies:
+
+   ```bash
+   sfw .venv/bin/python -m pip install --requirement requirements.txt
+   ```
+
+4. Activate the environment:
+
+   ```bash
+   source .venv/bin/activate
+   ```
+
+Provision the Chinook SQLite database for a fresh checkout:
 
 ```bash
-./scripts/setup.sh
+python scripts/bootstrap_chinook.py
 ```
-
-The installer is idempotent. Use its validation-only mode to diagnose an
-existing setup without changing files or accessing the network:
-
-```bash
-./scripts/setup.sh --check-only
-```
-
-Use `./scripts/setup.sh --force-db` to replace the local database with a fresh
-copy. `VENV_DIR` and `CHINOOK_DB_PATH` can override the defaults. Dependency
-downloads are protected by
-[Socket Firewall Free (`sfw`)](https://github.com/SocketDev/sfw-free), which
-must be available on `PATH`.
-
-After setup, activate the environment with `source .venv/bin/activate`.
 
 Configure the model endpoint in `.env` or export the values from your shell.
 Do not commit `.env` or secret values.
