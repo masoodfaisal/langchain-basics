@@ -12,7 +12,6 @@ import re
 import subprocess
 import tempfile
 import textwrap
-import time
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -152,47 +151,31 @@ def build_html(
 
 
 def firefox_screenshot(firefox: Path, html_file: Path, output: Path, profile: Path) -> None:
-    profile.mkdir(parents=True, exist_ok=True)
     command = [
         str(firefox),
         "--headless",
         "--no-remote",
-        "--profile",
-        str(profile),
         "--window-size",
         f"{SLIDE_WIDTH},{SLIDE_HEIGHT}",
         "--screenshot",
         str(output),
         html_file.as_uri(),
     ]
-    process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-    )
-    deadline = time.monotonic() + 45
     try:
-        while time.monotonic() < deadline:
-            if output.exists() and output.stat().st_size > 0:
-                try:
-                    with Image.open(output) as image:
-                        image.verify()
-                except (OSError, SyntaxError):
-                    time.sleep(0.1)
-                    continue
-                return
-            if process.poll() is not None:
-                stdout, stderr = process.communicate()
-                details = (stderr or stdout).strip()
-                raise RuntimeError(f"Firefox screenshot failed: {details}")
-            time.sleep(0.1)
-        raise TimeoutError(f"Firefox did not render {html_file.name} within 45 seconds")
-    finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+        result = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=45,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(
+            f"Firefox did not render {html_file.name} within 45 seconds"
+        ) from exc
+    if result.returncode != 0 or not output.exists():
+        raise RuntimeError(
+            f"Firefox screenshot failed for {html_file.name} (exit {result.returncode})"
+        )
 
 
 def render_slide_images(
