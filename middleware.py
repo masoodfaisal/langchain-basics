@@ -1,8 +1,9 @@
 """Agent middleware for the Chinook support bot.
 
-Currently provides a single ``customer_scoping`` middleware that enforces
-per-customer data access *outside* the tool implementations. This is the
-primary security boundary:
+Provides ``customer_scoping``, which enforces per-customer data access
+*outside* the tool implementations, and ``sanitize_message_names``, which
+keeps message ``name`` fields within the shape the Chat Completions API
+accepts. ``customer_scoping`` is the primary security boundary:
 
 * Unauthenticated callers cannot invoke any account tool.
 * A caller authenticated as customer A cannot read customer B's invoice,
@@ -30,16 +31,18 @@ Pattern follows https://docs.langchain.com/oss/python/langchain/middleware/custo
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from langchain.agents.middleware import wrap_tool_call
+from langchain.agents.middleware import wrap_model_call, wrap_tool_call
 from langchain.messages import ToolMessage
 
 from context import UserContext
 from db import aconnect
 
 if TYPE_CHECKING:
+    from langchain.agents.middleware import ModelRequest, ModelResponse
     from langchain.tools.tool_node import ToolCallRequest
     from langgraph.types import Command
 
@@ -119,4 +122,43 @@ async def customer_scoping(
 
 
     # All checks passed - let the tool run.
+    return await handler(request)
+
+
+# OpenAI requires every ``messages[N].name`` to match ``^[^\s<|\\/>]+$``, so a
+# display name with spaces ("Chinook Support Agent") stamped onto an AIMessage
+# 400s the *next* turn when that message is replayed from the checkpoint.
+_INVALID_NAME_CHARS = re.compile(r"[\s<|\\/>]+")
+
+
+def sanitize_name(name: object) -> str | None:
+    """Coerce a message name into ``^[^\\s<|\\\\/>]+$``, or ``None`` if nothing is left."""
+    if not isinstance(name, str):
+        return None
+    return _INVALID_NAME_CHARS.sub("_", name).strip("_") or None
+
+
+@wrap_model_call
+async def sanitize_message_names(
+    request: "ModelRequest",
+    handler: Callable[["ModelRequest"], Awaitable["ModelResponse"]],
+) -> "ModelResponse":
+    """Rewrite invalid message ``name`` values before the request reaches the model."""
+    messages = list(request.messages)
+    rewritten = False
+
+    for index, message in enumerate(messages):
+        name = getattr(message, "name", None)
+        if name is None:
+            continue
+        sanitized = sanitize_name(name)
+        if sanitized == name:
+            continue
+        logger.debug("sanitizing message name %r -> %r", name, sanitized)
+        messages[index] = message.model_copy(update={"name": sanitized})
+        rewritten = True
+
+    if rewritten:
+        request = request.override(messages=messages)
+
     return await handler(request)

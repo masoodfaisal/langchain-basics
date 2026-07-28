@@ -24,10 +24,16 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 
 from context import UserContext
-from middleware import customer_scoping
+from middleware import customer_scoping, sanitize_message_names
 from tools import ALL_TOOLS
 
 logger = logging.getLogger(__name__)
+
+# ``create_agent(name=...)`` is stamped onto every AIMessage's ``name``, which
+# is replayed to the model on later turns, so the identifier must stay
+# whitespace-free. Human-readable copy belongs in AGENT_DISPLAY_NAME.
+AGENT_NAME = "chinook_support_agent"
+AGENT_DISPLAY_NAME = "Chinook Support Agent"
 
 # ---------------------------------------------------------------------------
 # Model configuration
@@ -136,10 +142,11 @@ call a tool just to look responsive when no tool fits.
 graph = create_agent(
     model,
     ALL_TOOLS,
+    name=AGENT_NAME,
     system_prompt=SYSTEM_PROMPT,
     context_schema=UserContext,
     # customer_scoping must come first so it is the outermost wrapper
-    middleware=[customer_scoping],
+    middleware=[customer_scoping, sanitize_message_names],
     # No ``store=`` kwarg: the store is provided by the runtime in every
     # environment we deploy to. ``langgraph dev`` and LangSmith
     # Deployment both inject a managed store (configured via the

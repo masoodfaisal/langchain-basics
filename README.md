@@ -12,7 +12,7 @@ retain customer preferences across conversation threads.
 | Agent graph | `agent.py` | Configures the chat model, system prompt, tools, request context, and middleware, then exports the `graph` used by LangGraph. |
 | Invocation context | `context.py` | Defines `UserContext`, which carries the authenticated `customer_id` into each request. |
 | Agent tools | `tools.py` | Provides seven async tools for music discovery, order support, long-term memory, and delegated music reasoning. |
-| Authorization middleware | `middleware.py` | Blocks anonymous account access and prevents customers from reading invoices belonging to another customer. |
+| Authorization middleware | `middleware.py` | Blocks anonymous account access, prevents customers from reading invoices belonging to another customer, and sanitizes message `name` fields so replayed messages stay valid for the Chat Completions API. |
 | Database layer | `db.py` | Opens async SQLite connections and resolves the configurable Chinook database path. |
 | Long-term memory | `memory.py` | Wraps the LangGraph store and isolates saved memories in per-customer namespaces. |
 | Embeddings | `embeddings.py` | Generates local FastEmbed vectors used for semantic memory search. |
