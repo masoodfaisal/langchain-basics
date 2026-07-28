@@ -1,9 +1,11 @@
 """Chinook music store customer support agent.
 
-Exports a compiled LangGraph ``graph`` consumed by LangGraph Studio via
-``langgraph.json``. Two areas of work: music discovery and account/order
-support. Tools live in ``tools.py``; per-request customer identity is
-passed in through ``context.UserContext``.
+Exports a compiled LangGraph ``graph`` plus the ``make_graph`` factory that
+LangGraph Studio loads via ``langgraph.json``; the factory stamps per-request
+LangSmith trace metadata (``user_id``, ``environment``) on the root run. Two
+areas of work: music discovery and account/order support. Tools live in
+``tools.py``; per-request customer identity is passed in through
+``context.UserContext``.
 
 Patterns follow the canonical examples at https://docs.langchain.com/
 (see ``oss/python/langchain/agents`` and ``oss/python/langchain/tools``).
@@ -21,6 +23,7 @@ import os
 
 import httpx
 from langchain.agents import create_agent
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 
 from context import UserContext
@@ -147,3 +150,29 @@ graph = create_agent(
     # ``InMemoryStore`` directly into the tools' runtime. Either way,
     # ``runtime.store`` is what the ``remember`` / ``recall`` tools read.
 )
+
+
+# ---------------------------------------------------------------------------
+# Tracing metadata (LangSmith)
+# ---------------------------------------------------------------------------
+# ``environment`` keeps production traces separable from test / eval traces,
+# and ``user_id`` makes per-customer filtering and auditing possible. Both are
+# metadata (indexed and filterable in LangSmith) rather than tags.
+ENVIRONMENT = os.getenv("LANGSMITH_ENVIRONMENT", "production")
+
+
+def _trace_metadata(config: RunnableConfig | None) -> dict[str, str]:
+    """Build the LangSmith metadata stamped on the root run of one request."""
+    metadata: dict[str, str] = {"environment": ENVIRONMENT}
+    config = config or {}
+    customer_id = (config.get("configurable") or {}).get("customer_id")
+    if customer_id is None:
+        customer_id = (config.get("metadata") or {}).get("customer_id")
+    if customer_id is not None:
+        metadata["user_id"] = str(customer_id)
+    return metadata
+
+
+def make_graph(config: RunnableConfig | None = None):
+    """Return the agent graph with this request's trace metadata bound."""
+    return graph.with_config({"metadata": _trace_metadata(config)})

@@ -9,7 +9,7 @@ retain customer preferences across conversation threads.
 
 | Component | File | Responsibility |
 | --- | --- | --- |
-| Agent graph | `agent.py` | Configures the chat model, system prompt, tools, request context, and middleware, then exports the `graph` used by LangGraph. |
+| Agent graph | `agent.py` | Configures the chat model, system prompt, tools, request context, and middleware, then exports the `graph` and the `make_graph` factory that binds per-request LangSmith trace metadata. |
 | Invocation context | `context.py` | Defines `UserContext`, which carries the authenticated `customer_id` into each request. |
 | Agent tools | `tools.py` | Provides seven async tools for music discovery, order support, long-term memory, and delegated music reasoning. |
 | Authorization middleware | `middleware.py` | Blocks anonymous account access and prevents customers from reading invoices belonging to another customer. |
@@ -115,6 +115,7 @@ Optional configuration:
 | `EMBEDDING_CACHE_DIR` | `.cache/fastembed` | Changes the local embedding-model cache directory. |
 | `LANGSMITH_API_KEY` | none | Enables LangSmith evaluation workflows. |
 | `LANGSMITH_PROJECT` | `agent` | Selects the LangSmith tracing project. |
+| `LANGSMITH_ENVIRONMENT` | `production` | Stamped on every root run as `environment` metadata so environments are filterable. |
 | `EVAL_JUDGE_MODEL` | `gpt-4o-mini` | Selects the judge model used by the offline runner. |
 
 The embedding model may be downloaded from Hugging Face on first startup.
