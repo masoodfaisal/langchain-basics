@@ -28,6 +28,7 @@ loop. Sync callers must use ``await`` / ``ainvoke`` (see tests for examples).
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Annotated
 
@@ -40,6 +41,7 @@ from context import UserContext
 from db import aconnect
 from memory import Memo
 
+logger = logging.getLogger(__name__)
 
 MAX_LIMIT = 50
 
@@ -219,9 +221,14 @@ async def list_my_orders(
     if isinstance(customer_id, str):
         return customer_id
 
+    logger.info(
+        "account-tool: list_my_orders customer_id=%s limit=%s", customer_id, limit
+    )
+
     sql = """
         SELECT
             InvoiceId,
+            CustomerId,
             InvoiceDate,
             BillingCity,
             BillingCountry,
@@ -234,6 +241,18 @@ async def list_my_orders(
     async with aconnect() as conn:
         cur = await conn.execute(sql, {"cid": customer_id, "limit": limit})
         rows = await cur.fetchall()
+
+    foreign = [r["InvoiceId"] for r in rows if r["CustomerId"] != customer_id]
+    if foreign:
+        logger.error(
+            "scope-violation: list_my_orders for customer_id=%s fetched invoices "
+            "%s owned by another customer; refusing to return them",
+            customer_id, foreign,
+        )
+        return (
+            "I couldn't confirm those invoices belong to your account, so I "
+            "haven't shown them. Please try again."
+        )
 
     if not rows:
         return "You have no invoices on file."
@@ -262,6 +281,11 @@ async def get_invoice_details(
     if isinstance(customer_id, str):
         return customer_id
 
+    logger.info(
+        "account-tool: get_invoice_details customer_id=%s invoice_id=%s",
+        customer_id, invoice_id,
+    )
+
     async with aconnect() as conn:
         cur = await conn.execute(
             "SELECT InvoiceId, CustomerId, InvoiceDate, Total "
@@ -286,13 +310,15 @@ async def get_invoice_details(
                 il.UnitPrice,
                 il.Quantity
             FROM InvoiceLine il
+            JOIN Invoice i  ON i.InvoiceId = il.InvoiceId
+                           AND i.CustomerId = :cid
             JOIN Track  t  ON t.TrackId  = il.TrackId
             JOIN Album  a  ON a.AlbumId  = t.AlbumId
             JOIN Artist ar ON ar.ArtistId = a.ArtistId
             WHERE il.InvoiceId = :iid
             ORDER BY il.InvoiceLineId
             """,
-            {"iid": invoice_id},
+            {"iid": invoice_id, "cid": customer_id},
         )
         lines = await cur.fetchall()
 

@@ -24,6 +24,7 @@ Run with::
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -31,11 +32,15 @@ import pytest
 from langchain.messages import ToolMessage
 
 from context import UserContext
+from db import aconnect
 from middleware import customer_scoping
+from tools import list_my_orders
 
 # Chinook ground truth used in the ownership cases.
 OWNER_OF_INVOICE_1 = 2
 NON_OWNER_OF_INVOICE_1 = 1
+
+_INVOICE_ID_RE = re.compile(r"Invoice #(\d+)")
 
 
 # ---------------------------------------------------------------------------
@@ -45,12 +50,13 @@ def _request(
     tool_name: str,
     args: dict[str, Any],
     customer_id: int | None,
+    state: dict[str, Any] | None = None,
 ) -> SimpleNamespace:
-    """Fake ToolCallRequest. The middleware only reads ``tool_call`` and ``runtime``."""
+    """Fake ToolCallRequest. The middleware only reads ``tool_call``, ``state``, ``runtime``."""
     return SimpleNamespace(
         tool_call={"name": tool_name, "args": args, "id": "call_test"},
         tool=None,
-        state={},
+        state=state if state is not None else {},
         runtime=SimpleNamespace(context=UserContext(customer_id=customer_id)),
     )
 
@@ -177,3 +183,78 @@ async def test_get_invoice_details_unknown_invoice_passes_through():
         customer_id=1,
     )
     _assert_allowed(result)
+
+
+# ---------------------------------------------------------------------------
+# 8. Session binding: account tools stay bound to one customer per session
+# ---------------------------------------------------------------------------
+async def _session_pinned_to(customer_id: int | None) -> dict[str, Any]:
+    """Simulate the first turn of a thread: pin the customer into agent state."""
+    state: dict[str, Any] = {"messages": []}
+    update = await customer_scoping.abefore_agent(
+        state,
+        SimpleNamespace(context=UserContext(customer_id=customer_id)),
+    )
+    state.update(update or {})
+    return state
+
+
+async def _run_list_my_orders(request) -> str:
+    """Handler that runs the real tool with the request's runtime context."""
+    return await list_my_orders.coroutine(
+        runtime=request.runtime, limit=request.tool_call["args"]["limit"]
+    )
+
+
+async def _owners_of(invoice_ids: list[int]) -> set[int]:
+    placeholders = ",".join(str(int(i)) for i in invoice_ids)
+    async with aconnect() as conn:
+        cur = await conn.execute(
+            f"SELECT DISTINCT CustomerId FROM Invoice WHERE InvoiceId IN ({placeholders})"
+        )
+        rows = await cur.fetchall()
+    return {r["CustomerId"] for r in rows}
+
+
+async def test_two_list_my_orders_calls_in_one_session_return_one_customers_invoices():
+    session = await _session_pinned_to(1)
+
+    outputs = [
+        await customer_scoping.awrap_tool_call(
+            _request("list_my_orders", {"limit": 3}, customer_id=1, state=session),
+            _run_list_my_orders,
+        )
+        for _ in range(2)
+    ]
+
+    invoice_ids = [int(i) for out in outputs for i in _INVOICE_ID_RE.findall(out)]
+    assert len(invoice_ids) == 6
+    assert await _owners_of(invoice_ids) == {1}
+
+
+async def test_list_my_orders_denied_when_session_customer_changes_mid_thread():
+    """Regression: a second identical call must not serve another account."""
+    session = await _session_pinned_to(1)
+
+    first = await customer_scoping.awrap_tool_call(
+        _request("list_my_orders", {"limit": 3}, customer_id=1, state=session),
+        _run_list_my_orders,
+    )
+    second = await customer_scoping.awrap_tool_call(
+        _request("list_my_orders", {"limit": 3}, customer_id=5, state=session),
+        _run_list_my_orders,
+    )
+
+    assert await _owners_of(
+        [int(i) for i in _INVOICE_ID_RE.findall(first)]
+    ) == {1}
+    _assert_denied(second, expected_substrings=["different", "account"])
+
+
+async def test_session_binding_is_not_overwritten_on_later_turns():
+    session = await _session_pinned_to(1)
+    update = await customer_scoping.abefore_agent(
+        session, SimpleNamespace(context=UserContext(customer_id=5))
+    )
+    assert update is None
+    assert session["session_customer_id"] == 1
