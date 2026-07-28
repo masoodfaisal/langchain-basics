@@ -36,6 +36,18 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "sk-123456")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://ai-gateway:4000")
 MODEL_NAME = os.getenv("MODEL_NAME", "llama-distributed")
 
+# ---------------------------------------------------------------------------
+# Tracing identity
+# ---------------------------------------------------------------------------
+# This app shares a LangSmith project with other agents, so the root run needs
+# a stable name plus bounded-cardinality metadata for run rules to target it.
+APP_NAME = "chinook_orders_agent"
+ENVIRONMENT = os.getenv("APP_ENVIRONMENT", "development")
+TRACING_CONFIG = {
+    "run_name": APP_NAME,
+    "metadata": {"app": APP_NAME, "environment": ENVIRONMENT},
+}
+
 # Some self-hosted vLLM gateways are fronted by a self-signed TLS cert.
 # Set OPENAI_VERIFY_SSL=false (or 0 / no) to disable verification.
 _verify_env = os.getenv("OPENAI_VERIFY_SSL", "true").strip().lower()
@@ -138,6 +150,7 @@ graph = create_agent(
     ALL_TOOLS,
     system_prompt=SYSTEM_PROMPT,
     context_schema=UserContext,
+    name=APP_NAME,
     # customer_scoping must come first so it is the outermost wrapper
     middleware=[customer_scoping],
     # No ``store=`` kwarg: the store is provided by the runtime in every
@@ -146,4 +159,4 @@ graph = create_agent(
     # ``store`` block in langgraph.json). CI tests inject their own
     # ``InMemoryStore`` directly into the tools' runtime. Either way,
     # ``runtime.store`` is what the ``remember`` / ``recall`` tools read.
-)
+).with_config(TRACING_CONFIG)

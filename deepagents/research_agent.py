@@ -15,6 +15,7 @@ packages the same pattern so Module 4 can import it directly:
 #
 from datetime import datetime
 from pathlib import Path
+import os
 import sys
 
 # LangGraph loads this module directly from its file path, so Python does not
@@ -54,6 +55,15 @@ research_model: BaseChatModel = init_chat_model(
     temperature=0,
 )
 
+# This app shares a LangSmith project with other agents, so the root run needs
+# a stable name plus bounded-cardinality metadata for run rules to target it.
+APP_NAME = "asx_financial_analyst"
+ENVIRONMENT = os.getenv("APP_ENVIRONMENT", "development")
+TRACING_CONFIG = {
+    "run_name": APP_NAME,
+    "metadata": {"app": APP_NAME, "environment": ENVIRONMENT},
+}
+
 
 def build_research_agent():
     """Return a fresh research deep agent.
@@ -82,7 +92,8 @@ def build_research_agent():
         ),
         subagents=[research_subagent],
         checkpointer=MemorySaver(),
-    )
+        name=APP_NAME,
+    ).with_config(TRACING_CONFIG)
 
 
 def build_research_agent_with_context(
@@ -159,7 +170,8 @@ def build_research_agent_with_context(
             )
         ],
         checkpointer=MemorySaver(),
-    )
+        name=APP_NAME,
+    ).with_config(TRACING_CONFIG)
 
 
 def build_runtime_research_agent():
