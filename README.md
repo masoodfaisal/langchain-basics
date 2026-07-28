@@ -14,6 +14,7 @@ retain customer preferences across conversation threads.
 | Agent tools | `tools.py` | Provides seven async tools for music discovery, order support, long-term memory, and delegated music reasoning. |
 | Authorization middleware | `middleware.py` | Blocks anonymous account access and prevents customers from reading invoices belonging to another customer. |
 | Database layer | `db.py` | Opens async SQLite connections and resolves the configurable Chinook database path. |
+| HITL resume payloads | `hitl.py` | Maps a reviewer's choice (approve/edit/reject/respond) to the structured `{"decisions": [...]}` value `HumanInTheLoopMiddleware` expects, keyed by interrupt id. |
 | Long-term memory | `memory.py` | Wraps the LangGraph store and isolates saved memories in per-customer namespaces. |
 | Embeddings | `embeddings.py` | Generates local FastEmbed vectors used for semantic memory search. |
 | Runtime configuration | `langgraph.json` | Registers the graph and configures the runtime-managed memory store and its vector index. |
