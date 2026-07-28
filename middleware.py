@@ -1,8 +1,11 @@
 """Agent middleware for the Chinook support bot.
 
-Currently provides a single ``customer_scoping`` middleware that enforces
-per-customer data access *outside* the tool implementations. This is the
-primary security boundary:
+``ensure_final_response`` guarantees every turn ends with an assistant
+message, so a graph path that terminates before the model runs still
+returns a reply to the user.
+
+``customer_scoping`` enforces per-customer data access *outside* the tool
+implementations. This is the primary security boundary:
 
 * Unauthenticated callers cannot invoke any account tool.
 * A caller authenticated as customer A cannot read customer B's invoice,
@@ -33,14 +36,18 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from langchain.agents.middleware import wrap_tool_call
-from langchain.messages import ToolMessage
+from langchain.agents.middleware import after_agent, wrap_tool_call
+from langchain.messages import AIMessage, ToolMessage
 
 from context import UserContext
 from db import aconnect
 
 if TYPE_CHECKING:
+    from typing import Any
+
+    from langchain.agents.middleware import AgentState
     from langchain.tools.tool_node import ToolCallRequest
+    from langgraph.runtime import Runtime
     from langgraph.types import Command
 
 logger = logging.getLogger(__name__)
@@ -49,6 +56,13 @@ logger = logging.getLogger(__name__)
 # (catalog lookups, recommendations) are allowed for anyone.
 ACCOUNT_TOOLS: frozenset[str] = frozenset(
     {"list_my_orders", "get_invoice_details", "remember", "recall"}
+)
+
+# Sent when the graph is about to end without the model having produced a
+# reply, so the caller never sees a turn whose last message is the user's.
+FALLBACK_RESPONSE = (
+    "Sorry, I didn't catch that. I can help with music recommendations or "
+    "your Chinook orders and invoices - what would you like to do?"
 )
 
 
@@ -120,3 +134,21 @@ async def customer_scoping(
 
     # All checks passed - let the tool run.
     return await handler(request)
+
+
+@after_agent
+def ensure_final_response(
+    state: "AgentState",
+    runtime: "Runtime[UserContext]",
+) -> "dict[str, Any] | None":
+    """Append a fallback reply when a turn ends without an assistant message."""
+    messages = state.get("messages") or []
+    last = messages[-1] if messages else None
+    if isinstance(last, AIMessage) and (last.text.strip() or last.tool_calls):
+        return None
+
+    logger.warning(
+        "no-final-response: turn ended with %s; appending fallback reply",
+        type(last).__name__ if last is not None else "no messages",
+    )
+    return {"messages": [AIMessage(content=FALLBACK_RESPONSE)]}

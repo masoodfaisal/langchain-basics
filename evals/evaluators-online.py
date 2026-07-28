@@ -145,6 +145,30 @@ def _final_text(run: Any) -> str:
     return str(outputs) if outputs else ""
 
 
+def _has_final_assistant_message(run: Any) -> bool:
+    """True when the last message after the last human turn is an assistant reply."""
+    messages = _messages_from_payload(_field(run, "outputs", {}) or {})
+    if not messages:
+        messages = _messages_from_run(run)
+    if not messages:
+        return False
+
+    last_human = -1
+    for index, message in enumerate(messages):
+        if _message_role(message) in {"human", "user"}:
+            last_human = index
+
+    trailing = messages[last_human + 1:]
+    if not trailing:
+        return False
+
+    final = trailing[-1]
+    return (
+        _message_role(final) in {"ai", "assistant"}
+        and bool(_message_text(final).strip())
+    )
+
+
 def _tool_calls(run: Any) -> list[dict[str, Any]]:
     calls: list[dict[str, Any]] = []
     for message in _messages_from_run(run):
@@ -189,7 +213,7 @@ def perform_eval(run: Any) -> dict[str, Any]:
     )
 
     return {
-        "online_has_final_response": 1 if final_text.strip() else 0,
+        "online_has_final_response": 1 if _has_final_assistant_message(run) else 0,
         "online_no_internal_details": 0 if leaked_internal_term else 1,
         "online_no_tool_name_echo": 0 if leaked_tool_name else 1,
         "online_account_tool_for_account_request": int(account_tool_score),
