@@ -32,8 +32,9 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 
-from utils.models import model
+from utils.models import LS_METADATA, model
 from utils.search import resilient_tavily_search
+from utils.tracing import TracingMetadataMiddleware
 
 
 @tool(parse_docstring=True)
@@ -52,6 +53,7 @@ def tavily_search(query: str) -> str:
 research_model: BaseChatModel = init_chat_model(
     "openai:gpt-4.1-mini",
     temperature=0,
+    metadata=LS_METADATA,
 )
 
 
@@ -81,6 +83,7 @@ def build_research_agent():
             "Delegate research to the research-agent."
         ),
         subagents=[research_subagent],
+        middleware=[TracingMetadataMiddleware()],
         checkpointer=MemorySaver(),
     )
 
@@ -145,6 +148,7 @@ def build_research_agent_with_context(
         subagents=[research_subagent],
         backend=backend,
         middleware=[
+            TracingMetadataMiddleware(),
             RubricMiddleware(
                 model=research_model,
                 max_iterations=3,

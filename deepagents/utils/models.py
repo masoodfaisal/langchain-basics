@@ -14,8 +14,19 @@ load_dotenv(dotenv_path="../.env", override=True)
 
 from langchain.chat_models import init_chat_model
 
+MODEL_PROVIDER = "openai"
+MODEL_NAME = "gpt-4.1-mini"
+
+# LangSmith prices a span from ls_provider / ls_model_name; setting them here
+# keeps total_cost populated even when calls are routed through a gateway that
+# reports a rewritten model name.
+LS_METADATA = {"ls_provider": MODEL_PROVIDER, "ls_model_name": MODEL_NAME}
+
 # --- Default: OpenAI, direct ---
-model = init_chat_model("openai:gpt-4.1-mini")
+model = init_chat_model(
+    f"{MODEL_PROVIDER}:{MODEL_NAME}",
+    metadata=LS_METADATA,
+)
 
 # --- OpenAI via the LangSmith LLM Gateway (Module 3 §1.4) ---
 # Routes every model call through the LangSmith Gateway so that workspace
@@ -25,6 +36,7 @@ model = init_chat_model("openai:gpt-4.1-mini")
 #     model_provider="openai",
 #     base_url="https://gateway.smith.langchain.com/openai",
 #     api_key=os.environ["LANGSMITH_API_KEY_GATEWAY"],
+#     metadata=LS_METADATA,
 # )
 
 # --- Anthropic ---
