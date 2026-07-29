@@ -1,74 +1,77 @@
-"""Chinook music store customer support agent.
+"""A minimal Chinook agent with one self-contained tool.
 
-Exports a compiled LangGraph ``graph`` consumed by LangGraph Studio via
-``langgraph.json``. Two areas of work: music discovery and account/order
-support. Tools live in ``tools.py``; per-request customer identity is
-passed in through ``context.UserContext``.
+To use this graph in LangGraph Studio, add it to ``langgraph.json``:
 
-Patterns follow the canonical examples at https://docs.langchain.com/
-(see ``oss/python/langchain/agents`` and ``oss/python/langchain/tools``).
-
-add the following in langgrpah.json
-    "agent": "./agent.py:graph",
+    "simple-agent": "./simple-agent.py:graph"
 """
 
-# add this to langgraph.json     "agent": "./agent.py:graph"
-
-
-from __future__ import annotations
-
-import asyncio
-import atexit
-import logging
 import os
 
 import httpx
 from langchain.agents import create_agent
+from langchain.tools import tool
 from langchain_openai import ChatOpenAI
 
-from context import UserContext
-from middleware import customer_scoping
-from tools import ALL_TOOLS
 
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Model configuration
-# ---------------------------------------------------------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "sk-123456")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://ai-gateway:4000")
-MODEL_NAME = os.getenv("MODEL_NAME", "llama-distributed")
-
-# Some self-hosted vLLM gateways are fronted by a self-signed TLS cert.
-# Set OPENAI_VERIFY_SSL=false (or 0 / no) to disable verification.
-_verify_env = os.getenv("OPENAI_VERIFY_SSL", "true").strip().lower()
-VERIFY_SSL = _verify_env not in {"false", "0", "no"}
-
-if not VERIFY_SSL:
-    logger.warning(
-        "OPENAI_VERIFY_SSL is disabled - TLS certificate verification is OFF "
-        "for %s. Only do this for trusted dev gateways.",
-        OPENAI_BASE_URL,
-    )
-
-# Async-only: tools and middleware use aiosqlite, so the agent must be
-# invoked via ainvoke / astream. No sync httpx client is needed.
-_http_async_client = httpx.AsyncClient(verify=VERIFY_SSL)
-
-# always makes sure that access to models and tools are going via a gateway
-# for flexibility, resillience and central management
+# Configure the main agent model.
+verify_ssl = os.getenv("OPENAI_VERIFY_SSL", "true").strip().lower() not in {
+    "false",
+    "0",
+    "no",
+}
 model = ChatOpenAI(
-    openai_api_key=OPENAI_API_KEY,
-    openai_api_base=OPENAI_BASE_URL,
-    model_name=MODEL_NAME,
+    openai_api_key=os.getenv("OPENAI_API_KEY", "sk-123456"),
+    openai_api_base=os.getenv("OPENAI_BASE_URL", "http://ai-gateway:4000"),
+    model_name=os.getenv("MODEL_NAME", "llama-distributed"),
     temperature=0.01,
-    http_async_client=_http_async_client,
+    http_async_client=httpx.AsyncClient(verify=verify_ssl),
 )
 
 
-# ---------------------------------------------------------------------------
-# TODO: assess using LS prompt cache
-# ---------------------------------------------------------------------------
+# Configure the separate model used by the music expert tool.
+tool_verify_ssl = os.getenv(
+    "TOOL_LLM_VERIFY_SSL", os.getenv("OPENAI_VERIFY_SSL", "true")
+).strip().lower() not in {"false", "0", "no"}
+music_expert_model = ChatOpenAI(
+    openai_api_key=os.getenv(
+        "TOOL_LLM_API_KEY", os.getenv("OPENAI_API_KEY", "sk-123456")
+    ),
+    openai_api_base=os.getenv(
+        "TOOL_LLM_BASE_URL",
+        os.getenv("OPENAI_BASE_URL", "http://ai-gateway:4000"),
+    ),
+    model_name=os.getenv(
+        "TOOL_LLM_MODEL", os.getenv("MODEL_NAME", "llama-distributed")
+    ),
+    temperature=0.01,
+    http_async_client=httpx.AsyncClient(verify=tool_verify_ssl),
+)
+
+
+@tool
+async def ask_music_expert(question: str) -> str:
+    """Ask a second LLM to explain a music-related topic.
+
+    Use this for music concepts, comparisons, and recommendation rationale
+    that benefit from specialist reasoning. Do not use it for Chinook orders,
+    customer data, or claims about what is currently in the Chinook catalog.
+
+    Args:
+        question: A self-contained, music-related question for the specialist.
+    """
+    response = await music_expert_model.ainvoke(
+        [
+            (
+                "system",
+                "You are a concise music expert supporting a digital music "
+                "store agent. Answer only the music-related question. Do not "
+                "claim access to the store catalog, customer data, current "
+                "events, or external tools.",
+            ),
+            ("human", question),
+        ]
+    )
+    return response.text
 
 
 SYSTEM_PROMPT = """\
@@ -132,21 +135,10 @@ call a tool just to look responsive when no tool fits.
 """
 
 
-
-# ---------------------------------------------------------------------------
-# Graph (picked up by langgraph.json -> LangGraph Studio)
-# ---------------------------------------------------------------------------
 graph = create_agent(
     model,
-    ALL_TOOLS,
+    [ask_music_expert],
     system_prompt=SYSTEM_PROMPT,
-    context_schema=UserContext,
-    # customer_scoping must come first so it is the outermost wrapper
-    middleware=[customer_scoping],
-    # No ``store=`` kwarg: the store is provided by the runtime in every
-    # environment we deploy to. ``langgraph dev`` and LangSmith
-    # Deployment both inject a managed store (configured via the
-    # ``store`` block in langgraph.json). CI tests inject their own
-    # ``InMemoryStore`` directly into the tools' runtime. Either way,
-    # ``runtime.store`` is what the ``remember`` / ``recall`` tools read.
+    name="simple-agent"
+
 )
