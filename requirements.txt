@@ -19,3 +19,4 @@ fastembed>=0.7,<1.0
 deepagents~=0.6.12
 tavily-python~=0.7.21
 harbor
+openevals
