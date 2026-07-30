@@ -2,13 +2,32 @@
 
 The examples cover the minimal agent's two important behaviours: delegate
 music questions to ``ask_music_expert`` and decline unrelated questions
-without calling a tool.
+without calling a tool. ``dataset_name_for_project()`` creates the
+``<LANGSMITH_PROJECT>-<base-name>`` dataset name used by the runner.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+
+
+DEFAULT_DATASET_NAME = "simple-chinook-agent"
+
+
+def dataset_name_for_project(
+    project_name: str,
+    base_name: str = DEFAULT_DATASET_NAME,
+) -> str:
+    """Prefix the dataset name with ``LANGSMITH_PROJECT`` exactly once."""
+    project_name = project_name.strip()
+    base_name = base_name.strip()
+    if not project_name:
+        raise ValueError("LANGSMITH_PROJECT must not be empty.")
+    if not base_name:
+        raise ValueError("The dataset name must not be empty.")
+    prefix = f"{project_name}-"
+    return base_name if base_name.startswith(prefix) else f"{prefix}{base_name}"
 
 
 @dataclass(frozen=True)

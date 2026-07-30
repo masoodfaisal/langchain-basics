@@ -29,6 +29,9 @@ from the key used to call the judge model. There are intentionally no separate
 ``EVAL_JUDGE_API_KEY`` or ``EVAL_JUDGE_BASE_URL`` settings: the judge uses the
 existing ``OPENAI_API_KEY`` and ``OPENAI_BASE_URL`` settings.
 
+``LANGSMITH_PROJECT`` is prepended to the reusable evaluator and prompt names,
+which keeps resources from different projects separate in the LangSmith UI.
+
 ``upsert_llm_evaluator()`` registers this judge as a reusable LangSmith LLM
 evaluator. Registration never uploads the local API-key value. Because the
 registered evaluator runs in LangSmith, its execution environment must also
@@ -64,6 +67,18 @@ class CorrectnessFeedback(BaseModel):
         )
     )
     reasoning: str = Field(description="A concise explanation of the verdict.")
+
+
+def project_scoped_name(name: str, project_name: str | None = None) -> str:
+    """Prefix a LangSmith resource name with the project exactly once."""
+    project_name = (project_name or os.getenv("LANGSMITH_PROJECT", "")).strip()
+    name = name.strip()
+    if not project_name:
+        raise ValueError("LANGSMITH_PROJECT must not be empty.")
+    if not name:
+        raise ValueError("The LangSmith resource name must not be empty.")
+    prefix = f"{project_name}-"
+    return name if name.startswith(prefix) else f"{prefix}{name}"
 
 
 def build_llm_judges(model: str | None = None) -> list:
@@ -117,11 +132,14 @@ async def upsert_llm_evaluator(
     client: Client,
     model_name: str,
     replace: bool,
+    project_name: str | None = None,
 ) -> tuple[Any, str]:
     """Register or update the reusable LLM judge in LangSmith."""
+    prompt_name = project_scoped_name(CORRECTNESS_PROMPT_NAME, project_name)
+    evaluator_name = project_scoped_name(LLM_EVALUATOR_NAME, project_name)
     try:
         client.push_prompt(
-            CORRECTNESS_PROMPT_NAME,
+            prompt_name,
             object=_judge_chain(model_name),
             description="Correctness judge for the beginner simple-agent dataset.",
         )
@@ -129,7 +147,7 @@ async def upsert_llm_evaluator(
         if "Nothing to commit" not in str(exc):
             raise
 
-    prompt = client.get_prompt(CORRECTNESS_PROMPT_NAME)
+    prompt = client.get_prompt(prompt_name)
     if prompt is None or not prompt.last_commit_hash:
         raise RuntimeError("LangSmith did not return the judge prompt commit.")
 
@@ -142,10 +160,10 @@ async def upsert_llm_evaluator(
             "reference": "reference.reference_answer",
         },
     }
-    existing = await _find_evaluator(client, LLM_EVALUATOR_NAME)
+    existing = await _find_evaluator(client, evaluator_name)
     if existing is None:
         result = await client.evaluators.create(
-            name=LLM_EVALUATOR_NAME,
+            name=evaluator_name,
             type="llm",
             llm_evaluator=configuration,
         )
@@ -153,13 +171,13 @@ async def upsert_llm_evaluator(
     else:
         if existing.type != "llm":
             raise RuntimeError(
-                f"Evaluator {LLM_EVALUATOR_NAME!r} exists but is not LLM-based."
+                f"Evaluator {evaluator_name!r} exists but is not LLM-based."
             )
         if not replace:
             return existing, "Reused"
         result = await client.evaluators.update(
             str(existing.id),
-            name=LLM_EVALUATOR_NAME,
+            name=evaluator_name,
             llm_evaluator=configuration,
         )
         action = "Updated"

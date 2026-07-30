@@ -7,7 +7,8 @@ Run from the project root:
 The runner uploads the small dataset, registers and binds the reusable code and
 LLM evaluators, then invokes the agent without context or middleware. It reads
 credentials from environment variables or the project ``.env`` file without
-printing their values.
+printing their values. Dataset, evaluator, prompt, and experiment names use the
+form ``<LANGSMITH_PROJECT>-<base-name>``.
 """
 
 from __future__ import annotations
@@ -31,7 +32,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from evals.helpers import final_text
-from evals.simple_agent_dataset import to_langsmith_examples
+from evals.simple_agent_dataset import (
+    DEFAULT_DATASET_NAME,
+    dataset_name_for_project,
+    to_langsmith_examples,
+)
 from evals.simple_agent_llm_judge import (
     DEFAULT_JUDGE_MODEL,
     upsert_llm_evaluator,
@@ -40,7 +45,6 @@ from evals.simple_agent_llm_judge import (
 
 SIMPLE_AGENT_FILE = PROJECT_ROOT / "simple-agent.py"
 EVALUATOR_FILE = PROJECT_ROOT / "evals" / "simple_agent_evaluators_offline.py"
-DEFAULT_DATASET_NAME = "simple-chinook-agent"
 REUSABLE_EVALUATOR_VERSION = 3
 CODE_EVALUATORS = {
     "simple-agent-offline-tool-trajectory": "tool_trajectory",
@@ -51,6 +55,18 @@ DATASET_DESCRIPTION = (
     "Beginner Chinook agent examples covering music-expert delegation and "
     "out-of-scope refusal."
 )
+
+
+def _project_scoped_name(project_name: str, base_name: str) -> str:
+    """Prefix a LangSmith resource name with the project exactly once."""
+    project_name = project_name.strip()
+    base_name = base_name.strip()
+    if not project_name:
+        raise ValueError("LANGSMITH_PROJECT must not be empty.")
+    if not base_name:
+        raise ValueError("The LangSmith resource name must not be empty.")
+    prefix = f"{project_name}-"
+    return base_name if base_name.startswith(prefix) else f"{prefix}{base_name}"
 
 
 def _load_env() -> None:
@@ -249,16 +265,30 @@ async def amain(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if not args.project.strip():
+        print(
+            "LANGSMITH_PROJECT is not configured.",
+            file=sys.stderr,
+        )
+        return 2
+
+    project_name = args.project.strip()
+    dataset_name = dataset_name_for_project(project_name, args.dataset_name)
+    experiment_prefix = _project_scoped_name(
+        project_name,
+        args.experiment_prefix,
+    )
 
     client = Client()
     try:
-        dataset_id, action = _upsert_dataset(client, args.dataset_name)
-        print(f"{action} dataset {args.dataset_name!r} ({dataset_id}).")
+        dataset_id, action = _upsert_dataset(client, dataset_name)
+        print(f"{action} dataset {dataset_name!r} ({dataset_id}).")
 
-        for name, function_name in CODE_EVALUATORS.items():
+        for base_name, function_name in CODE_EVALUATORS.items():
+            evaluator_name = _project_scoped_name(project_name, base_name)
             evaluator, evaluator_action = await _upsert_code_evaluator(
                 client,
-                name,
+                evaluator_name,
                 function_name,
                 args.replace,
             )
@@ -269,16 +299,17 @@ async def amain(args: argparse.Namespace) -> int:
             client,
             args.judge_model,
             args.replace,
+            project_name,
         )
         binding_action = _bind_to_dataset(client, dataset_id, llm_evaluator)
         print(f"{evaluator_action} {llm_evaluator.name!r}; {binding_action}.")
 
         experiment = await aevaluate(
             _target,
-            data=args.dataset_name,
-            experiment_prefix=args.experiment_prefix,
+            data=dataset_name,
+            experiment_prefix=experiment_prefix,
             metadata={
-                "application": "simple-agent",
+                "application": project_name,
                 "environment": "offline-evaluation",
             },
             max_concurrency=args.max_concurrency,
@@ -293,6 +324,11 @@ async def amain(args: argparse.Namespace) -> int:
 def main() -> int:
     _load_env()
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--project",
+        default=os.getenv("LANGSMITH_PROJECT", ""),
+        help="Project prefix used for all LangSmith resource names.",
+    )
     parser.add_argument(
         "--dataset-name",
         default=os.getenv("SIMPLE_AGENT_DATASET_NAME", DEFAULT_DATASET_NAME),
