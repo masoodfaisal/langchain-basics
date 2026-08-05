@@ -27,7 +27,7 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 
 from context import UserContext
-from middleware import customer_scoping
+from middleware import customer_scoping, demo_feedback
 from tools import ALL_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -142,7 +142,7 @@ graph = create_agent(
     system_prompt=SYSTEM_PROMPT,
     context_schema=UserContext,
     # customer_scoping must come first so it is the outermost wrapper
-    middleware=[customer_scoping],
+    middleware=[customer_scoping, demo_feedback],
     # No ``store=`` kwarg: the store is provided by the runtime in every
     # environment we deploy to. ``langgraph dev`` and LangSmith
     # Deployment both inject a managed store (configured via the

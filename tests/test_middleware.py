@@ -1,4 +1,4 @@
-"""Tests for the ``customer_scoping`` middleware.
+"""Tests for the agent middleware.
 
 Drives ``customer_scoping.awrap_tool_call`` directly with a fake request and
 a fake async handler so each gate path is exercised without spinning up the
@@ -16,6 +16,10 @@ Coverage:
    *before* the SQL fans out.
 5. ``get_invoice_details`` allows the rightful owner.
 6. ``get_invoice_details`` denies when ``invoice_id`` is missing.
+7. Unknown invoice IDs pass through to the tool for normal not-found handling.
+8. ``demo_feedback`` records root-trace feedback after agent completion and is
+   a no-op when tracing is disabled.
+9. The graph selected by ``langgraph.json`` registers ``demo_feedback``.
 
 Run with::
 
@@ -24,14 +28,24 @@ Run with::
 
 from __future__ import annotations
 
+import ast
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from langchain.messages import ToolMessage
 
 from context import UserContext
-from middleware import customer_scoping
+from middleware import (
+    DEMO_FEEDBACK_KEY,
+    DEMO_FEEDBACK_SCORE,
+    DEMO_FEEDBACK_VALUE,
+    customer_scoping,
+    demo_feedback,
+)
 
 # Chinook ground truth used in the ownership cases.
 OWNER_OF_INVOICE_1 = 2
@@ -177,3 +191,76 @@ async def test_get_invoice_details_unknown_invoice_passes_through():
         customer_id=1,
     )
     _assert_allowed(result)
+
+
+# ---------------------------------------------------------------------------
+# 8. In-source demo feedback
+# ---------------------------------------------------------------------------
+async def test_demo_feedback_attaches_score_to_root_trace(monkeypatch):
+    trace_id = uuid4()
+    calls: list[dict[str, Any]] = []
+
+    class FakeClient:
+        def create_feedback(self, **kwargs):
+            calls.append(kwargs)
+
+    current_run = SimpleNamespace(
+        id=uuid4(),
+        trace_id=trace_id,
+        ls_client=FakeClient(),
+    )
+    monkeypatch.setattr("middleware.get_current_run_tree", lambda: current_run)
+
+    result = await demo_feedback.aafter_agent({}, SimpleNamespace())
+
+    assert result is None
+    assert calls == [
+        {
+            "key": DEMO_FEEDBACK_KEY,
+            "score": DEMO_FEEDBACK_SCORE,
+            "value": DEMO_FEEDBACK_VALUE,
+            "trace_id": trace_id,
+            "comment": "Created in source by the after-agent demo middleware.",
+        }
+    ]
+
+
+async def test_demo_feedback_is_noop_without_active_trace(monkeypatch):
+    monkeypatch.setattr("middleware.get_current_run_tree", lambda: None)
+
+    result = await demo_feedback.aafter_agent({}, SimpleNamespace())
+
+    assert result is None
+
+
+def test_configured_graph_registers_demo_feedback():
+    """Protect the LangGraph entrypoint from silently omitting the middleware."""
+    project_root = Path(__file__).resolve().parents[1]
+    config = json.loads((project_root / "langgraph.json").read_text())
+    module_path, _, _attribute = config["graphs"]["agent"].partition(":")
+    graph_source = (project_root / module_path).read_text()
+    tree = ast.parse(graph_source)
+
+    create_agent_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "create_agent"
+    ]
+    assert len(create_agent_calls) == 1
+
+    middleware_keyword = next(
+        (
+            keyword
+            for keyword in create_agent_calls[0].keywords
+            if keyword.arg == "middleware"
+        ),
+        None,
+    )
+    assert middleware_keyword is not None
+    assert isinstance(middleware_keyword.value, ast.List)
+    assert any(
+        isinstance(item, ast.Name) and item.id == "demo_feedback"
+        for item in middleware_keyword.value.elts
+    )

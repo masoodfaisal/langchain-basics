@@ -1,8 +1,14 @@
 """Agent middleware for the Chinook support bot.
 
-Currently provides a single ``customer_scoping`` middleware that enforces
-per-customer data access *outside* the tool implementations. This is the
-primary security boundary:
+Provides two middleware hooks:
+
+* ``customer_scoping`` enforces per-customer data access *outside* the tool
+  implementations. This is the primary security boundary.
+* ``demo_feedback`` records a LangSmith feedback score after each completed
+  agent invocation. It demonstrates how an in-source score appears in the
+  LangSmith UI and can drive an annotation-queue automation.
+
+The customer-scoping guarantees are:
 
 * Unauthenticated callers cannot invoke any account tool.
 * A caller authenticated as customer A cannot read customer B's invoice,
@@ -29,18 +35,21 @@ Pattern follows https://docs.langchain.com/oss/python/langchain/middleware/custo
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from langchain.agents.middleware import wrap_tool_call
+from langchain.agents.middleware import AgentState, after_agent, wrap_tool_call
 from langchain.messages import ToolMessage
+from langsmith import get_current_run_tree
 
 from context import UserContext
 from db import aconnect
 
 if TYPE_CHECKING:
     from langchain.tools.tool_node import ToolCallRequest
+    from langgraph.runtime import Runtime
     from langgraph.types import Command
 
 logger = logging.getLogger(__name__)
@@ -50,6 +59,51 @@ logger = logging.getLogger(__name__)
 ACCOUNT_TOOLS: frozenset[str] = frozenset(
     {"list_my_orders", "get_invoice_details", "remember", "recall"}
 )
+
+# Feedback scores are numeric in LangSmith. ``demo-value`` is retained as the
+# categorical display value, while score 0 makes the example easy to route with
+# a rule such as ``demo < 0.5``.
+DEMO_FEEDBACK_KEY = "demo"
+DEMO_FEEDBACK_SCORE = 0
+DEMO_FEEDBACK_VALUE = "demo-value"
+
+
+@after_agent
+async def demo_feedback(
+    _state: AgentState,
+    _runtime: "Runtime[UserContext]",
+) -> None:
+    """Attach demo feedback to the root trace after the agent completes.
+
+    The active middleware hook is itself a child run, so ``trace_id`` is used
+    to associate the feedback with the root agent trace. When LangSmith tracing
+    is disabled there is no current run tree and the hook intentionally becomes
+    a no-op. Feedback failures are best-effort observability failures and must
+    not turn an otherwise successful agent response into an error.
+    """
+    current_run = get_current_run_tree()
+    if current_run is None or current_run.ls_client is None:
+        logger.debug("demo-feedback: no active LangSmith trace; skipping")
+        return
+
+    trace_id = current_run.trace_id or current_run.id
+    try:
+        # ``create_feedback`` is synchronous. Keep the async agent's event loop
+        # responsive even when the SDK cannot use background batch ingestion.
+        await asyncio.to_thread(
+            current_run.ls_client.create_feedback,
+            key=DEMO_FEEDBACK_KEY,
+            score=DEMO_FEEDBACK_SCORE,
+            value=DEMO_FEEDBACK_VALUE,
+            trace_id=trace_id,
+            comment="Created in source by the after-agent demo middleware.",
+        )
+    except Exception:
+        logger.warning(
+            "demo-feedback: failed to attach feedback to trace %s",
+            trace_id,
+            exc_info=True,
+        )
 
 
 def _deny(request: "ToolCallRequest", message: str) -> ToolMessage:

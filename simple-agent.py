@@ -1,8 +1,8 @@
 """A minimal Chinook agent with one self-contained tool.
 
-To use this graph in LangGraph Studio, add it to ``langgraph.json``:
+This is the graph currently registered in ``langgraph.json``:
 
-    "simple-agent": "./simple-agent.py:graph"
+    "agent": "./simple-agent.py:graph"
 """
 
 import os
@@ -11,6 +11,8 @@ import httpx
 from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_openai import ChatOpenAI
+
+from middleware import demo_feedback
 
 
 # Configure the main agent model.
@@ -139,6 +141,6 @@ graph = create_agent(
     model,
     [ask_music_expert],
     system_prompt=SYSTEM_PROMPT,
-    name="simple-agent"
-
+    middleware=[demo_feedback],
+    name="simple-agent",
 )

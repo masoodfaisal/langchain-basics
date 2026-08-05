@@ -12,7 +12,7 @@ retain customer preferences across conversation threads.
 | Agent graph | `agent.py` | Configures the chat model, system prompt, tools, request context, and middleware, then exports the `graph` used by LangGraph. |
 | Invocation context | `context.py` | Defines `UserContext`, which carries the authenticated `customer_id` into each request. |
 | Agent tools | `tools.py` | Provides seven async tools for music discovery, order support, long-term memory, and delegated music reasoning. |
-| Authorization middleware | `middleware.py` | Blocks anonymous account access and prevents customers from reading invoices belonging to another customer. |
+| Agent middleware | `middleware.py` | Enforces customer authorization and records a demo LangSmith feedback score after each completed agent invocation. |
 | Database layer | `db.py` | Opens async SQLite connections and resolves the configurable Chinook database path. |
 | Long-term memory | `memory.py` | Wraps the LangGraph store and isolates saved memories in per-customer namespaces. |
 | Embeddings | `embeddings.py` | Generates local FastEmbed vectors used for semantic memory search. |
@@ -144,6 +144,29 @@ result = await graph.ainvoke(
 Use `customer_id=None` for an anonymous caller. Because the database, tools, and
 middleware are async, use `ainvoke` or `astream` rather than synchronous graph
 methods.
+
+### In-source demo feedback
+
+When LangSmith tracing is enabled, both exported agent graphs register the
+`demo_feedback` after-agent middleware. It attaches this feedback to the root
+trace after every completed invocation:
+
+```text
+key = "demo"
+score = 0
+value = "demo-value"
+```
+
+LangSmith feedback scores must be numeric, so `demo-value` is stored as the
+categorical display value. To demonstrate automatic annotation routing, create
+an automation with the **Add to annotation queue** action and this trace filter:
+
+```text
+and(eq(feedback_key, "demo"), lt(feedback_score, 0.5))
+```
+
+The hook is a no-op when `LANGSMITH_TRACING` is not enabled, and a LangSmith
+feedback failure does not fail the agent invocation.
 
 ## Test
 
