@@ -2,7 +2,7 @@
   "python_version": "3.13",
   "dependencies": ["."],
   "graphs": {
-    "agent": "./simple-agent.py:graph"
+    "agent": "./agent.py:graph"
   },
   "env": "./.env",
   "store": {
