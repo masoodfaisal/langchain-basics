@@ -220,3 +220,6 @@ OPENAI_BASE_URL=XXXX
 # Set LANGSMITH_API_KEY in your shell, not here.
 # Set OPENAI_API_KEY in your shell, not here.
 ```
+
+# LangChain Agent Building Skill
+https://github.com/langchain-ai/langchain-skills
