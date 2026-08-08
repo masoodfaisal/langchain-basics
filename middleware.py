@@ -1,9 +1,15 @@
 """Agent middleware for the Chinook support bot.
 
-Provides two middleware hooks:
+Provides three middleware hooks:
 
 * ``customer_scoping`` enforces per-customer data access *outside* the tool
   implementations. This is the primary security boundary.
+* ``bounded_tool_retry`` bounds how often the model may re-issue a tool call
+  that already failed in this turn. Argument permutation is not recovery: a
+  re-ordered list argument canonicalizes to the same signature as the call it
+  came from, and a tool that has already failed twice is refused so the model
+  changes strategy or reports the blocked deliverables instead of burning the
+  turn's tool budget.
 * ``demo_feedback`` records a LangSmith feedback score after each completed
   agent invocation. It demonstrates how an in-source score appears in the
   LangSmith UI and can drive an annotation-queue automation.
@@ -36,9 +42,11 @@ Pattern follows https://docs.langchain.com/oss/python/langchain/middleware/custo
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from collections import Counter
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware import AgentState, after_agent, wrap_tool_call
 from langchain.messages import ToolMessage
@@ -59,6 +67,11 @@ logger = logging.getLogger(__name__)
 ACCOUNT_TOOLS: frozenset[str] = frozenset(
     {"list_my_orders", "get_invoice_details", "remember", "recall"}
 )
+
+# How many times a single tool may fail in one turn before further calls to it
+# are refused. Two attempts is enough to cover a transient failure; beyond that
+# the model must change approach rather than keep guessing arguments.
+TOOL_FAILURE_CAP = 2
 
 # Feedback scores are numeric in LangSmith. ``demo-value`` is retained as the
 # categorical display value, while score 0 makes the example easy to route with
@@ -114,6 +127,87 @@ def _deny(request: "ToolCallRequest", message: str) -> ToolMessage:
         name=request.tool_call["name"],
         status="error",
     )
+
+
+def _canonical_signature(tool_call: dict[str, Any]) -> tuple[str, str]:
+    """Signature of a tool call, insensitive to the ordering of list arguments."""
+    args = tool_call.get("args") or {}
+    normalized = {
+        key: sorted(value, key=repr) if isinstance(value, list) else value
+        for key, value in args.items()
+    }
+    return (
+        tool_call["name"],
+        json.dumps(normalized, sort_keys=True, default=str),
+    )
+
+
+def _failed_calls_so_far(
+    state: Any,
+) -> tuple[set[tuple[str, str]], Counter[str]]:
+    """Canonical signatures and per-tool counts of the calls that already failed."""
+    messages = (state or {}).get("messages") or []
+
+    requested: dict[str, dict[str, Any]] = {}
+    for message in messages:
+        for tool_call in getattr(message, "tool_calls", None) or []:
+            requested[tool_call["id"]] = tool_call
+
+    signatures: set[tuple[str, str]] = set()
+    failures: Counter[str] = Counter()
+    for message in messages:
+        if not isinstance(message, ToolMessage) or message.status != "error":
+            continue
+        tool_call = requested.get(message.tool_call_id)
+        if tool_call is None:
+            continue
+        signature = _canonical_signature(tool_call)
+        signatures.add(signature)
+        failures[signature[0]] += 1
+    return signatures, failures
+
+
+@wrap_tool_call
+async def bounded_tool_retry(
+    request: "ToolCallRequest",
+    handler: Callable[
+        ["ToolCallRequest"], Awaitable["ToolMessage | Command"]
+    ],
+) -> "ToolMessage | Command":
+    """Refuse repeat calls that already failed and cap failures per tool."""
+    signature = _canonical_signature(request.tool_call)
+    tool_name = signature[0]
+    attempted, failures = _failed_calls_so_far(request.state)
+
+    if signature in attempted:
+        logger.info("retry-deny: %s re-issued with an already-failed signature", tool_name)
+        return _deny(
+            request,
+            (
+                f"Retry refused: {tool_name} was already called with these "
+                "arguments in this conversation and it failed. Re-ordering list "
+                "arguments does not make it a different call. Do not guess "
+                "argument values that contradict the documentation or the error "
+                "message you already read - if the documented values failed, the "
+                "arguments are not the cause. Tell the user which step is blocked "
+                "and which deliverables you cannot produce."
+            ),
+        )
+
+    if failures[tool_name] >= TOOL_FAILURE_CAP:
+        logger.info("retry-deny: %s exhausted its %s-failure budget", tool_name, TOOL_FAILURE_CAP)
+        return _deny(
+            request,
+            (
+                f"Retry budget exhausted: {tool_name} has already failed "
+                f"{failures[tool_name]} times in this conversation. Stop calling "
+                "it. Either use a different tool to find out what is actually "
+                "available, or reply now naming the blocked step and listing the "
+                "deliverables you cannot produce."
+            ),
+        )
+
+    return await handler(request)
 
 
 def _customer_id_from(request: "ToolCallRequest") -> int | None:

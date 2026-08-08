@@ -17,9 +17,12 @@ Coverage:
 5. ``get_invoice_details`` allows the rightful owner.
 6. ``get_invoice_details`` denies when ``invoice_id`` is missing.
 7. Unknown invoice IDs pass through to the tool for normal not-found handling.
-8. ``demo_feedback`` records root-trace feedback after agent completion and is
+8. ``bounded_tool_retry`` lets a first attempt through, refuses a re-issued
+   call whose only difference is list-argument ordering, and refuses any call
+   to a tool that already burned its failure budget.
+9. ``demo_feedback`` records root-trace feedback after agent completion and is
    a no-op when tracing is disabled.
-9. The graph selected by ``langgraph.json`` registers ``demo_feedback``.
+10. The graph selected by ``langgraph.json`` registers ``demo_feedback``.
 
 Run with::
 
@@ -36,13 +39,14 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from langchain.messages import ToolMessage
+from langchain.messages import AIMessage, ToolMessage
 
 from context import UserContext
 from middleware import (
     DEMO_FEEDBACK_KEY,
     DEMO_FEEDBACK_SCORE,
     DEMO_FEEDBACK_VALUE,
+    bounded_tool_retry,
     customer_scoping,
     demo_feedback,
 )
@@ -194,7 +198,94 @@ async def test_get_invoice_details_unknown_invoice_passes_through():
 
 
 # ---------------------------------------------------------------------------
-# 8. In-source demo feedback
+# 8. bounded_tool_retry: failed calls are not re-issued
+# ---------------------------------------------------------------------------
+def _turn(*attempts: tuple[str, dict[str, Any]]) -> dict[str, Any]:
+    """Message history where every listed tool call was requested and failed."""
+    messages: list[Any] = []
+    for index, (tool_name, args) in enumerate(attempts):
+        call_id = f"call_{index}"
+        messages.append(
+            AIMessage(
+                content="",
+                tool_calls=[{"name": tool_name, "args": args, "id": call_id}],
+            )
+        )
+        messages.append(
+            ToolMessage(
+                content="boom",
+                tool_call_id=call_id,
+                name=tool_name,
+                status="error",
+            )
+        )
+    return {"messages": messages}
+
+
+async def _drive_retry(
+    tool_name: str,
+    args: dict[str, Any],
+    state: dict[str, Any],
+):
+    request = _request(tool_name, args, customer_id=1)
+    request.state = state
+    return await bounded_tool_retry.awrap_tool_call(request, _fake_handler)
+
+
+async def test_first_attempt_passes_through():
+    result = await _drive_retry("popular_in_genre", {"genre": "Jazz"}, {"messages": []})
+    _assert_allowed(result)
+
+
+async def test_reordered_list_argument_is_the_same_failed_call():
+    """A permuted list argument must canonicalize to the signature that failed."""
+    state = _turn(("find_similar_albums", {"genres": ["Jazz", "Rock"]}))
+
+    result = await _drive_retry(
+        "find_similar_albums",
+        {"genres": ["Rock", "Jazz"]},
+        state,
+    )
+
+    _assert_denied(result, expected_substrings=["retry refused", "blocked"])
+
+
+async def test_different_arguments_are_allowed_until_the_failure_cap():
+    state = _turn(("find_similar_albums", {"album_name": "Ride the Lightning"}))
+
+    result = await _drive_retry(
+        "find_similar_albums",
+        {"album_name": "Let There Be Rock"},
+        state,
+    )
+
+    _assert_allowed(result)
+
+
+async def test_tool_refused_once_failure_budget_is_exhausted():
+    state = _turn(
+        ("find_similar_albums", {"album_name": "one"}),
+        ("find_similar_albums", {"album_name": "two"}),
+    )
+
+    result = await _drive_retry("find_similar_albums", {"album_name": "three"}, state)
+
+    _assert_denied(result, expected_substrings=["retry budget exhausted", "deliverables"])
+
+
+async def test_other_tools_keep_their_own_budget():
+    state = _turn(
+        ("find_similar_albums", {"album_name": "one"}),
+        ("find_similar_albums", {"album_name": "two"}),
+    )
+
+    result = await _drive_retry("popular_in_genre", {"genre": "Jazz"}, state)
+
+    _assert_allowed(result)
+
+
+# ---------------------------------------------------------------------------
+# 9. In-source demo feedback
 # ---------------------------------------------------------------------------
 async def test_demo_feedback_attaches_score_to_root_trace(monkeypatch):
     trace_id = uuid4()

@@ -27,7 +27,7 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 
 from context import UserContext
-from middleware import customer_scoping, demo_feedback
+from middleware import bounded_tool_retry, customer_scoping, demo_feedback
 from tools import ALL_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -105,6 +105,12 @@ Security and privacy:
 - Never ask for, guess, or expose customer ids, tool names, middleware behavior, or other internal system details.
 - If a tool says access is denied or the resource is not theirs, state that plainly and politely. Do not retry with modified arguments and do not speculate.
 
+Failure recovery:
+- Argument permutation is not recovery. Never re-issue a call you already made: re-ordering a list argument, or re-sending the same values in a different shape, is the same call and will fail the same way.
+- Give a failing tool at most two attempts. After that, stop calling it and change approach - use a different tool to find out what is actually available.
+- Never guess argument values that contradict documentation or an error message you have already read. If the documented values failed, the arguments are not the cause.
+- As soon as a required step cannot be completed, answer the user: name the blocked step and list the deliverables you cannot produce. Do not keep probing, and do not end the turn without an answer or wait to be asked.
+
 Response style:
 - Be concise and specific.
 - Use invoice ids, album names, artist names, and track names when helpful.
@@ -142,7 +148,7 @@ graph = create_agent(
     system_prompt=SYSTEM_PROMPT,
     context_schema=UserContext,
     # customer_scoping must come first so it is the outermost wrapper
-    middleware=[customer_scoping, demo_feedback],
+    middleware=[customer_scoping, bounded_tool_retry, demo_feedback],
     # No ``store=`` kwarg: the store is provided by the runtime in every
     # environment we deploy to. ``langgraph dev`` and LangSmith
     # Deployment both inject a managed store (configured via the
