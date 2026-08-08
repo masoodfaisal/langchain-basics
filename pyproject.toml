@@ -2,7 +2,7 @@
 name = "agent"
 version = "0.1.0"
 description = "LangChain agent with MCP tools"
-requires-python = "==3.13.*"
+requires-python = "==3.14.*"
 dynamic = ["dependencies"]
 
 [tool.setuptools.dynamic]
@@ -11,7 +11,7 @@ dependencies = { file = ["requirements.txt"] }
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
-pythonVersion = "3.13"
+pythonVersion = "3.14"
 
 # This repository intentionally uses a flat module layout.  Be explicit so
 # deployment builds do not mistake data directories such as ``resources`` for
