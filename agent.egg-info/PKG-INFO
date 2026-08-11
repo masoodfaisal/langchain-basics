@@ -1,0 +1,25 @@
+Metadata-Version: 2.4
+Name: agent
+Version: 0.1.0
+Summary: LangChain agent with MCP tools
+Requires-Python: >=3.13
+Requires-Dist: langchain~=1.3.14
+Requires-Dist: langchain-openai~=1.4.2
+Requires-Dist: langchain-mcp-adapters~=0.3.2
+Requires-Dist: langgraph~=1.2.10
+Requires-Dist: langgraph-checkpoint-sqlite~=3.1.1
+Requires-Dist: langgraph-cli~=0.4.31
+Requires-Dist: fastapi~=0.136
+Requires-Dist: uvicorn[standard]~=0.38
+Requires-Dist: typing_extensions~=4.15
+Requires-Dist: langgraph-cli[inmem]~=0.4.31
+Requires-Dist: langchain-community~=0.4.2
+Requires-Dist: langsmith[otel]~=0.10.17
+Requires-Dist: pytest~=8.3
+Requires-Dist: pytest-asyncio~=0.24
+Requires-Dist: aiosqlite~=0.22
+Requires-Dist: fastembed<1.0,>=0.7
+Requires-Dist: deepagents~=0.6.12
+Requires-Dist: tavily-python~=0.7.21
+Requires-Dist: harbor
+Requires-Dist: openevals

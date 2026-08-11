@@ -151,10 +151,13 @@ def build_html(
 
 
 def firefox_screenshot(firefox: Path, html_file: Path, output: Path, profile: Path) -> None:
+    profile.mkdir(parents=True, exist_ok=True)
     command = [
         str(firefox),
         "--headless",
         "--no-remote",
+        "--profile",
+        str(profile),
         "--window-size",
         f"{SLIDE_WIDTH},{SLIDE_HEIGHT}",
         "--screenshot",
