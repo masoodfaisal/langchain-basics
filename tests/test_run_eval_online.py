@@ -117,3 +117,6 @@ def test_attach_migrates_legacy_rule_to_reusable_version(
         == run_eval_online.REUSABLE_EVALUATOR_VERSION
         == 3
     )
+    assert patch_kwargs["request_kwargs"]["json"]["filter"] == (
+        'or(eq(name, "agent"), eq(name, "simple-agent"))'
+    )

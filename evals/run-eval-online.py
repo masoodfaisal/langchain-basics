@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import ast
 import asyncio
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -33,6 +34,21 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EVALUATOR_FILE = PROJECT_ROOT / "evals" / "evaluators-online.py"
 DEFAULT_EVALUATOR_NAME = "chinook-online-guardrails"
 REUSABLE_EVALUATOR_VERSION = 3
+
+
+def _load_evaluator_module() -> Any:
+    spec = importlib.util.spec_from_file_location(
+        "evaluators_online",
+        EVALUATOR_FILE,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load {EVALUATOR_FILE}.")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+CHINOOK_ROOT_RUN_NAMES = _load_evaluator_module().CHINOOK_ROOT_RUN_NAMES
 
 
 def _load_env() -> None:
@@ -171,6 +187,12 @@ def _attach_evaluator(
 
     payload = {
         "display_name": args.name,
+        "filter": "or("
+        + ", ".join(
+            f'eq(name, "{run_name}")'
+            for run_name in CHINOOK_ROOT_RUN_NAMES
+        )
+        + ")",
         "sampling_rate": args.sampling_rate,
         "session_id": project_id,
         "evaluator_id": evaluator_id,

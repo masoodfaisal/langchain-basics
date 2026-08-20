@@ -19,8 +19,11 @@ Upload with:
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+
+CHINOOK_ROOT_RUN_NAMES = ("agent", "simple-agent")
 
 ACCOUNT_REQUEST_TERMS = (
     "invoice",
@@ -158,7 +161,11 @@ def _tool_calls(run: Any) -> list[dict[str, Any]]:
 
 def _contains_any(text: str, terms: tuple[str, ...] | set[str]) -> bool:
     lowered = text.lower()
-    return any(term.lower() in lowered for term in terms)
+    return any(
+        re.compile(rf"\b{re.escape(term.lower())}\b").search(lowered)
+        is not None
+        for term in terms
+    )
 
 
 def perform_eval(run: Any) -> dict[str, Any]:
@@ -167,6 +174,9 @@ def perform_eval(run: Any) -> dict[str, Any]:
     LangSmith online code evaluators call this function with a single ``Run``.
     The returned dict creates one feedback key per item.
     """
+    if _field(run, "name") not in CHINOOK_ROOT_RUN_NAMES:
+        return {}
+
     user_text = _input_text(run)
     final_text = _final_text(run)
     tool_names = {
