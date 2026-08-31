@@ -12,6 +12,7 @@ Requires-Dist: langgraph-cli~=0.4.31
 Requires-Dist: fastapi~=0.136
 Requires-Dist: uvicorn[standard]~=0.38
 Requires-Dist: typing_extensions~=4.15
+Requires-Dist: PyJWT[crypto]~=2.13.0
 Requires-Dist: langgraph-cli[inmem]~=0.4.31
 Requires-Dist: langchain-community~=0.4.2
 Requires-Dist: langsmith[otel]~=0.10.17

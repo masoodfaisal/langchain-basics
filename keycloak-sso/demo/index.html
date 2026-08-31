@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src http://127.0.0.1:8080 http://127.0.0.1:2024; img-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' http://127.0.0.1:8080; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+    >
+    <title>LangSmith Agent SSO Demo</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { max-width: 760px; margin: 3rem auto; padding: 0 1rem; }
+      main { border: 1px solid #8886; border-radius: 12px; padding: 1.5rem; }
+      .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1rem 0; }
+      button { cursor: pointer; padding: .65rem 1rem; }
+      textarea { box-sizing: border-box; min-height: 5rem; padding: .75rem; width: 100%; }
+      pre { min-height: 4rem; overflow-wrap: anywhere; padding: 1rem; white-space: pre-wrap; }
+      .ok { color: #188038; }
+      .error { color: #c5221f; }
+      code { background: #8882; padding: .1rem .3rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>LangSmith Agent SSO Demo</h1>
+      <p>
+        This browser uses OAuth 2.0 Authorization Code with PKCE. Tokens stay
+        in this tab's session storage and are never displayed.
+      </p>
+      <p id="status">Checking sign-in state…</p>
+
+      <div class="actions">
+        <button id="sign-in" type="button">Sign in with Keycloak</button>
+        <button id="sign-out" type="button">Sign out</button>
+      </div>
+
+      <label for="prompt">Message for the simple agent</label>
+      <textarea id="prompt">Recommend a jazz album from the Chinook store.</textarea>
+      <div class="actions">
+        <button id="invoke" type="button">Call authenticated agent</button>
+      </div>
+      <pre id="output" aria-live="polite">No request sent yet.</pre>
+    </main>
+
+    <script>
+      'use strict';
+
+      const issuer = 'http://127.0.0.1:8080/realms/langchain-agent';
+      const clientId = 'langsmith-agent-ui';
+      const redirectUri = 'http://127.0.0.1:3000/index.html';
+      const agentUrl = 'http://127.0.0.1:2024';
+      const scopes = 'openid profile email';
+
+      const statusNode = document.querySelector('#status');
+      const outputNode = document.querySelector('#output');
+      const signInButton = document.querySelector('#sign-in');
+      const signOutButton = document.querySelector('#sign-out');
+      const invokeButton = document.querySelector('#invoke');
+      const promptNode = document.querySelector('#prompt');
+
+      function base64Url(bytes) {
+        let binary = '';
+        bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+        return btoa(binary)
+          .replaceAll('+', '-')
+          .replaceAll('/', '_')
+          .replace(/=+$/u, '');
+      }
+
+      function randomValue(size = 32) {
+        return base64Url(crypto.getRandomValues(new Uint8Array(size)));
+      }
+
+      async function sha256(value) {
+        const digest = await crypto.subtle.digest(
+          'SHA-256',
+          new TextEncoder().encode(value),
+        );
+        return base64Url(new Uint8Array(digest));
+      }
+
+      function clearTokens() {
+        sessionStorage.removeItem('access_token');
+        sessionStorage.removeItem('id_token');
+        sessionStorage.removeItem('expires_at');
+      }
+
+      function clearLoginTransaction() {
+        sessionStorage.removeItem('pkce_verifier');
+        sessionStorage.removeItem('oauth_state');
+      }
+
+      function accessToken() {
+        const expiresAt = Number(sessionStorage.getItem('expires_at') || 0);
+        if (Date.now() >= expiresAt) {
+          clearTokens();
+          return null;
+        }
+        return sessionStorage.getItem('access_token');
+      }
+
+      function renderStatus(message, kind = '') {
+        statusNode.textContent = message;
+        statusNode.className = kind;
+      }
+
+      function renderOutput(value, kind = '') {
+        outputNode.textContent = value;
+        outputNode.className = kind;
+      }
+
+      async function beginLogin() {
+        const verifier = randomValue(64);
+        const state = randomValue(32);
+        sessionStorage.setItem('pkce_verifier', verifier);
+        sessionStorage.setItem('oauth_state', state);
+
+        const query = new URLSearchParams({
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          response_type: 'code',
+          scope: scopes,
+          state,
+          code_challenge: await sha256(verifier),
+          code_challenge_method: 'S256',
+        });
+        window.location.assign(
+          `${issuer}/protocol/openid-connect/auth?${query.toString()}`,
+        );
+      }
+
+      async function finishLogin(params) {
+        const expectedState = sessionStorage.getItem('oauth_state');
+        const verifier = sessionStorage.getItem('pkce_verifier');
+        const code = params.get('code');
+        if (!expectedState || params.get('state') !== expectedState || !verifier) {
+          throw new Error('OAuth state validation failed. Start sign-in again.');
+        }
+        if (!code) throw new Error('Keycloak did not return an authorization code.');
+
+        const body = new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: clientId,
+          code,
+          redirect_uri: redirectUri,
+          code_verifier: verifier,
+        });
+        const response = await fetch(
+          `${issuer}/protocol/openid-connect/token`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body,
+          },
+        );
+        if (!response.ok) {
+          throw new Error(`Keycloak token exchange failed (${response.status}).`);
+        }
+
+        const result = await response.json();
+        if (
+          typeof result.access_token !== 'string'
+          || !Number.isFinite(result.expires_in)
+          || result.expires_in <= 0
+        ) {
+          throw new Error('Keycloak returned an invalid token response.');
+        }
+        sessionStorage.setItem('access_token', result.access_token);
+        sessionStorage.setItem('id_token', result.id_token || '');
+        sessionStorage.setItem(
+          'expires_at',
+          String(Date.now() + Math.max(0, result.expires_in - 15) * 1000),
+        );
+        clearLoginTransaction();
+        window.history.replaceState({}, document.title, redirectUri);
+      }
+
+      async function invokeAgent() {
+        const token = accessToken();
+        if (!token) {
+          renderStatus('Sign in before calling the agent.', 'error');
+          return;
+        }
+
+        invokeButton.disabled = true;
+        renderOutput('Calling the authenticated agent…');
+        try {
+          const commonHeaders = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          };
+          const threadResponse = await fetch(`${agentUrl}/threads`, {
+            method: 'POST',
+            headers: commonHeaders,
+            body: '{}',
+          });
+          if (!threadResponse.ok) {
+            throw new Error(`Thread creation failed (${threadResponse.status}).`);
+          }
+          const thread = await threadResponse.json();
+
+          const runResponse = await fetch(
+            `${agentUrl}/threads/${encodeURIComponent(thread.thread_id)}/runs/wait`,
+            {
+              method: 'POST',
+              headers: commonHeaders,
+              body: JSON.stringify({
+                assistant_id: 'agent',
+                input: {
+                  messages: [{ role: 'user', content: promptNode.value }],
+                },
+              }),
+            },
+          );
+          if (!runResponse.ok) {
+            throw new Error(`Agent invocation failed (${runResponse.status}).`);
+          }
+
+          const result = await runResponse.json();
+          const messages = Array.isArray(result.messages) ? result.messages : [];
+          const lastMessage = messages.at(-1);
+          const content = lastMessage && lastMessage.content;
+          renderOutput(
+            typeof content === 'string' ? content : JSON.stringify(content ?? result, null, 2),
+            'ok',
+          );
+        } catch (error) {
+          renderOutput(error instanceof Error ? error.message : String(error), 'error');
+        } finally {
+          invokeButton.disabled = false;
+        }
+      }
+
+      function signOut() {
+        const idToken = sessionStorage.getItem('id_token');
+        clearTokens();
+        const query = new URLSearchParams({
+          client_id: clientId,
+          post_logout_redirect_uri: redirectUri,
+        });
+        if (idToken) query.set('id_token_hint', idToken);
+        window.location.assign(
+          `${issuer}/protocol/openid-connect/logout?${query.toString()}`,
+        );
+      }
+
+      async function initialize() {
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('error')) {
+          clearTokens();
+          clearLoginTransaction();
+          renderStatus(
+            `Keycloak sign-in failed: ${params.get('error')}.`,
+            'error',
+          );
+          window.history.replaceState({}, document.title, redirectUri);
+          return;
+        } else if (params.has('code')) {
+          try {
+            await finishLogin(params);
+          } catch (error) {
+            clearTokens();
+            clearLoginTransaction();
+            window.history.replaceState({}, document.title, redirectUri);
+            renderStatus(
+              error instanceof Error ? error.message : String(error),
+              'error',
+            );
+            return;
+          }
+        }
+
+        renderStatus(
+          accessToken()
+            ? 'Signed in. The Agent Server will validate your Keycloak token.'
+            : 'Not signed in.',
+          accessToken() ? 'ok' : '',
+        );
+      }
+
+      signInButton.addEventListener('click', beginLogin);
+      signOutButton.addEventListener('click', signOut);
+      invokeButton.addEventListener('click', invokeAgent);
+      initialize();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,59 @@
+{
+  "python_version": "3.13",
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./simple-agent.py:graph"
+  },
+  "env": "./.env",
+  "auth": {
+    "path": "./auth.py:auth",
+    "disable_studio_auth": true,
+    "openapi": {
+      "securitySchemes": {
+        "KeycloakBearer": {
+          "type": "http",
+          "scheme": "bearer",
+          "bearerFormat": "JWT",
+          "description": "Keycloak access token for the langsmith-agent-api audience"
+        }
+      },
+      "security": [
+        {
+          "KeycloakBearer": []
+        }
+      ]
+    }
+  },
+  "http": {
+    "cors": {
+      "allow_origins": [
+        "http://127.0.0.1:3000"
+      ],
+      "allow_methods": [
+        "GET",
+        "POST",
+        "OPTIONS"
+      ],
+      "allow_headers": [
+        "Authorization",
+        "Content-Type"
+      ],
+      "allow_credentials": false,
+      "max_age": 600
+    },
+    "logging_headers": {
+      "excludes": [
+        "authorization",
+        "cookie",
+        "x-api-key"
+      ]
+    }
+  },
+  "store": {
+    "index": {
+      "embed": "./embeddings.py:embed",
+      "dims": 768,
+      "fields": ["text"]
+    }
+  }
+}

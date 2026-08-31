@@ -2,7 +2,7 @@
   "python_version": "3.14",
   "dependencies": ["."],
   "graphs": {
-    "agent": "./agent.py:graph"
+    "remote_agent": "./remote_agent.py:graph"
   },
   "env": "./.env"
 }

@@ -28,3 +28,5 @@ chinook.db
 __.md__
 
 run-fleet-experiment.py
+agent.egg-info/
+
