@@ -19,6 +19,8 @@ pytest~=8.3
 pytest-asyncio~=0.24
 # Async SQLite for the agent's DB layer (db.py / tools.py / middleware.py).
 aiosqlite~=0.22
+# In-process Rego evaluation for the standalone Guardian middleware demo.
+regopy==1.5.2
 fastembed>=0.7,<1.0
 deepagents~=0.6.12
 tavily-python~=0.7.21

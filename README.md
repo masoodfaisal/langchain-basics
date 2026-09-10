@@ -145,6 +145,23 @@ Use `customer_id=None` for an anonymous caller. Because the database, tools, and
 middleware are async, use `ainvoke` or `astream` rather than synchronous graph
 methods.
 
+### Docker deployment
+
+The RegoPy policy engine loads a native library that requires `libatomic.so.1`
+on Linux. The `dockerfile_lines` in `langgraph.json` install Debian's
+`libatomic1` package in the LangGraph image.
+
+Build the image tag used by `docker-compose.yaml`, then recreate the API service:
+
+```bash
+langgraph build -t dbs-image:0.0.1
+docker compose up -d --force-recreate langgraph-api
+```
+
+After changing the image configuration, rebuild before recreating the service.
+Restarting a container built from the old image will still fail with
+`libatomic.so.1: cannot open shared object file`.
+
 ### In-source demo feedback
 
 When LangSmith tracing is enabled, both exported agent graphs register the

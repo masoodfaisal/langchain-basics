@@ -2,10 +2,10 @@
 ``recall`` tools.
 
 We use a fresh :class:`InMemoryStore` per test (no embedding index) so the
-tests are deterministic and offline. The store still supports namespace
-listing and ``query`` search; ``InMemoryStore.asearch`` falls back to
-substring matching when no index is configured, which is enough to cover
-the tools' contracts here. ``customer_scoping`` is exercised separately in
+tests are deterministic and offline. Without an embedding index, store
+search returns items in the requested namespace without semantic ranking.
+Granite responses are mocked; memory tools still evaluate the real Rego
+policy before accessing the store. ``customer_scoping`` is exercised separately in
 ``test_middleware.py`` -- here we just drive the tools directly with a
 synthesized runtime, the same way ``test_tools.py`` does.
 
@@ -22,11 +22,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from langgraph.store.memory import InMemoryStore
 from pydantic import ValidationError
 
 from context import UserContext
+from guardian import MemoryGuardian
 from memory import Memo
 from tools import recall, remember
 
@@ -35,11 +37,32 @@ from tools import recall, remember
 # Helpers
 # ---------------------------------------------------------------------------
 def _runtime(customer_id: int | None, store) -> SimpleNamespace:
-    """Minimal ToolRuntime stand-in: tools read ``.context`` and ``.store``."""
+    """Stand in for customer context, the store, and captured invocation state."""
     return SimpleNamespace(
         context=UserContext(customer_id=customer_id),
         store=store,
+        state={
+            "source_user_message": "I prefer vinyl over CDs. Email invoices as PDF.",
+        },
     )
+
+
+@pytest.fixture(autouse=True)
+async def granite_approval(monkeypatch):
+    def transport(request):
+        return httpx.Response(200, json={"choices": [{
+            "finish_reason": "stop",
+            "message": {"content": "<score>yes</score>"},
+        }]})
+
+    async with httpx.AsyncClient(
+        base_url="http://granite.test/v1/",
+        transport=httpx.MockTransport(transport),
+    ) as granite:
+        monkeypatch.setattr(
+            "tools.memory_guardian", MemoryGuardian(granite, model="test-granite"),
+        )
+        yield
 
 
 @pytest.fixture

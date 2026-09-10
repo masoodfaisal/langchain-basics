@@ -1,9 +1,11 @@
 """Agent middleware for the Chinook support bot.
 
-Provides two middleware hooks:
+Provides three middleware hooks:
 
 * ``customer_scoping`` enforces per-customer data access *outside* the tool
   implementations. This is the primary security boundary.
+* ``capture_user_message`` snapshots the incoming user text for memory checks,
+  before the model or tools run. Customer identity stays in ``UserContext``.
 * ``demo_feedback`` records a LangSmith feedback score after each completed
   agent invocation. It demonstrates how an in-source score appears in the
   LangSmith UI and can drive an annotation-queue automation.
@@ -38,10 +40,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import Annotated, NotRequired, TYPE_CHECKING
 
-from langchain.agents.middleware import AgentState, after_agent, wrap_tool_call
-from langchain.messages import ToolMessage
+from langchain.agents.middleware import AgentState, after_agent, before_agent, wrap_tool_call
+from langchain.agents.middleware.types import PrivateStateAttr
+from langchain.messages import HumanMessage, ToolMessage
 from langsmith import get_current_run_tree
 
 from context import UserContext
@@ -66,6 +69,30 @@ ACCOUNT_TOOLS: frozenset[str] = frozenset(
 DEMO_FEEDBACK_KEY = "demo"
 DEMO_FEEDBACK_SCORE = 0
 DEMO_FEEDBACK_VALUE = "demo-value"
+
+
+class MemoryState(AgentState):
+    """Internal source text; callers supply only the ordinary messages input."""
+
+    source_user_message: NotRequired[Annotated[str, PrivateStateAttr]]
+
+
+@before_agent(state_schema=MemoryState)
+async def capture_user_message(
+    state: MemoryState,
+    _runtime: "Runtime[UserContext]",
+) -> dict[str, str]:
+    """Capture the final incoming user message, never search older history.
+
+    This demo accepts text messages only. Always overwrite the snapshot so
+    a turn without user text cannot reuse a previous turn's memory source.
+    """
+    messages = state.get("messages", [])
+    message = messages[-1] if messages else None
+    source = ""
+    if isinstance(message, HumanMessage) and isinstance(message.content, str):
+        source = message.content
+    return {"source_user_message": source}
 
 
 @after_agent

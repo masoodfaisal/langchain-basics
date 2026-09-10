@@ -3,9 +3,10 @@
 What this exercises beyond the unit tests:
 
 * The platform-managed store actually receives writes and serves reads.
+* The configured Granite model and Rego policy approve memory writes.
 * ``embeddings.py`` is imported by the LangGraph runtime and embedding
   calls reach the configured gateway.
-* The two new tools are wired into ``runtime.store`` correctly when the
+* The memory tools are wired into ``runtime.store`` correctly when the
   graph is loaded by the API (i.e. without a ``store=`` kwarg).
 * Per-customer namespacing holds end-to-end, not just at the ``Memo``
   layer.
@@ -27,6 +28,8 @@ How to run:
 * Start the server in another terminal::
 
       langgraph dev
+
+  Configure ``GUARDIAN_BASE_URL`` and ``GUARDIAN_MODEL`` for that server.
 
 * In this terminal::
 

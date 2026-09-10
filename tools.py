@@ -19,8 +19,11 @@ LLM delegation
 
 The account and memory tools read ``runtime.context.customer_id`` (see
 ``context.py``) so they never trust a customer id passed in by the model.
-The memory tools also read ``runtime.store`` (the LangGraph store the
-agent was compiled with via ``create_agent(..., store=...)``).
+The memory tools use ``runtime.store``, provided by LangGraph. ``remember``
+checks the proposed fact with Granite and Rego before saving; ``recall``
+uses Rego to authorize a search within the customer's namespace.
+The original user text is captured at graph entry in ``runtime.state``;
+customer identity remains in ``runtime.context``.
 
 All tools are async (``async def``) so SQLite I/O does not block the event
 loop. Sync callers must use ``await`` / ``ainvoke`` (see tests for examples).
@@ -38,10 +41,12 @@ from pydantic import Field
 
 from context import UserContext
 from db import aconnect
+from guardian import MemoryGuardian, MemoryLimit, MemoryText
 from memory import Memo
 
 
 MAX_LIMIT = 50
+memory_guardian = MemoryGuardian()
 
 # This model is deliberately separate from the agent model in ``agent.py``.
 # Its settings fall back to the primary model settings, while TOOL_LLM_*
@@ -313,7 +318,7 @@ async def get_invoice_details(
 # ---------------------------------------------------------------------------
 @tool
 async def remember(
-    fact: str,
+    fact: MemoryText,
     runtime: ToolRuntime[UserContext],
 ) -> str:
     """Save a durable fact about the authenticated customer.
@@ -332,15 +337,22 @@ async def remember(
     if runtime.store is None:
         return "Long-term memory is not configured for this deployment."
 
-    key = await Memo(runtime.store).write(customer_id, fact)
+    memo = Memo(runtime.store)
+    if not await memory_guardian.allows(
+        "remember", customer_id=customer_id, namespace=memo.namespace(customer_id),
+        args={"fact": fact},
+        source_user_message=runtime.state.get("source_user_message", ""),
+    ):
+        return "This fact could not be saved under the memory policy."
+    key = await memo.write(customer_id, fact)
     return f"Saved (id={key[:8]})."
 
 
 @tool
 async def recall(
-    query: str,
+    query: MemoryText,
     runtime: ToolRuntime[UserContext],
-    limit: Limit = 3,
+    limit: MemoryLimit = 3,
 ) -> str:
     """Search the authenticated customer's saved memories.
 
@@ -358,7 +370,13 @@ async def recall(
     if runtime.store is None:
         return "Long-term memory is not configured for this deployment."
 
-    hits = await Memo(runtime.store).search(customer_id, query, limit=limit)
+    memo = Memo(runtime.store)
+    if not await memory_guardian.allows(
+        "recall", customer_id=customer_id, namespace=memo.namespace(customer_id),
+        args={"query": query, "limit": limit},
+    ):
+        return "Memory search is not allowed under the memory policy."
+    hits = await memo.search(customer_id, query, limit=limit)
     if not hits:
         return "No memories on file for this customer."
     return "\n".join(f"  - {h.value.get('text', h.value)}" for h in hits)

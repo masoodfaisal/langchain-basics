@@ -19,6 +19,7 @@ Requires-Dist: langsmith[otel]~=0.10.17
 Requires-Dist: pytest~=8.3
 Requires-Dist: pytest-asyncio~=0.24
 Requires-Dist: aiosqlite~=0.22
+Requires-Dist: regopy==1.5.2
 Requires-Dist: fastembed<1.0,>=0.7
 Requires-Dist: deepagents~=0.6.12
 Requires-Dist: tavily-python~=0.7.21

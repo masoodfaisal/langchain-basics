@@ -22,11 +22,16 @@ py-modules = [
     "context",
     "db",
     "embeddings",
+    "guardian",
     "memory",
     "middleware",
+    "rego_policy",
     "tools",
 ]
-packages = ["evals"]
+packages = ["evals", "policies"]
+
+[tool.setuptools.package-data]
+policies = ["guardian.rego"]
 
 [tool.pytest.ini_options]
 markers = [

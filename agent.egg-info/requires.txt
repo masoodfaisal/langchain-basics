@@ -14,6 +14,7 @@ langsmith[otel]~=0.10.17
 pytest~=8.3
 pytest-asyncio~=0.24
 aiosqlite~=0.22
+regopy==1.5.2
 fastembed<1.0,>=0.7
 deepagents~=0.6.12
 tavily-python~=0.7.21

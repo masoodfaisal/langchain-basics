@@ -3,6 +3,9 @@ context
 db
 embeddings
 evals
+guardian
 memory
 middleware
+policies
+rego_policy
 tools

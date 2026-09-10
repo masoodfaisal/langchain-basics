@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -44,6 +46,27 @@ class _Client:
 
     def create_examples(self, **kwargs: Any) -> None:
         self.created_examples = kwargs
+
+
+async def test_target_passes_question_once_and_keeps_context_for_identity(
+    run_eval_offline: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question = "I prefer jazz and PDF invoices."
+    graph = SimpleNamespace(ainvoke=AsyncMock(return_value={
+        "messages": [{"role": "assistant", "content": "Saved your preferences."}],
+    }))
+    monkeypatch.setitem(sys.modules, "agent", SimpleNamespace(graph=graph))
+
+    result = await run_eval_offline._target({
+        "question": question,
+        "context": {"customer_id": 2},
+    })
+
+    graph.ainvoke.assert_awaited_once_with(
+        {"messages": [{"role": "user", "content": question}]},
+        context=run_eval_offline.UserContext(customer_id=2),
+    )
+    assert result["answer"] == "Saved your preferences."
 
 
 def test_upsert_dataset_creates_dataset_and_examples(run_eval_offline: Any) -> None:
