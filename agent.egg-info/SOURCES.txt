@@ -27,7 +27,6 @@ evals/run_simple_agent_eval_offline.py
 evals/simple_agent_dataset.py
 evals/simple_agent_evaluators_offline.py
 evals/simple_agent_llm_judge.py
-policies/__init__.py
 policies/guardian.rego
 tests/test_auth.py
 tests/test_checkpointing.py

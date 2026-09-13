@@ -97,7 +97,9 @@ class MemoryGuardian:
         Recall skips Granite. Invalid input or any model/policy error denies.
         """
         ## for demo
-        return True
+        enbale_guardian = bool(os.getenv("ENABLE_GUARDIAN", "False"))
+        if(enbale_guardian):
+            return True
 
         try:
             if type(customer_id) is not int or customer_id <= 0:
