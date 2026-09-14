@@ -1,0 +1,14 @@
+From: billing@chinook.example
+To: leonekohler@surfeu.de
+Subject: Your Chinook invoice 1
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+MIME-Version: 1.0
+
+Invoice 1 was issued on 2021-01-01.
+
+Items:
+- “Balls to the Wall” — quantity 1 × $0.99 = $0.99
+- “Restless and Wild” — quantity 1 × $0.99 = $0.99
+
+Total: $1.98

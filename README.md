@@ -231,27 +231,38 @@ service is not already running, start it in a separate terminal:
 ollama serve
 ```
 
-For the one-time model setup, save the following as `Modelfile.guardian`. It uses
+The repository includes [Modelfile.guardian](Modelfile.guardian). It uses
 [IBM Granite Guardian 4.1](https://huggingface.co/ibm-granite/granite-guardian-4.1-8b-GGUF)
-and forwards the application's messages and judging criterion unchanged:
+and forwards the application's messages and judging criterion unchanged.
 
-```text
+If the file is missing, regenerate it from the repository root by copying the
+entire block below, including the `cat` line and closing `EOF`. The quoted `EOF`
+keeps the template text literal:
+
+```bash
+cat > Modelfile.guardian <<'EOF'
 FROM hf.co/ibm-granite/granite-guardian-4.1-8b-GGUF:Q4_K_M
 TEMPLATE """{{- range .Messages }}<|start_of_role|>{{ .Role }}<|end_of_role|>{{ .Content }}<|end_of_text|>{{ "\n" }}{{- end }}<|start_of_role|>assistant<|end_of_role|>"""
 PARAMETER num_ctx 8192
 PARAMETER temperature 0
 PARAMETER stop "<|end_of_text|>"
 PARAMETER stop "<|start_of_role|>"
+EOF
 ```
 
-In another terminal, download the model (about 5 GB) and register it as
-`guardian-local`. Skip this step if that model is already configured with the
-template above:
+From the repository root, confirm the file exists, then download the model
+(about 5 GB) and register it as `guardian-local`. Skip these setup steps if that
+model is already configured with the template above:
 
 ```bash
+ls -l ./Modelfile.guardian
 ollama pull hf.co/ibm-granite/granite-guardian-4.1-8b-GGUF:Q4_K_M
-ollama create guardian-local -f Modelfile.guardian
+ollama create guardian-local -f ./Modelfile.guardian
 ```
+
+If `ls` reports a missing file, generate it with the block above before running
+`ollama create`. To search for it, use `find . -name 'Modelfile*'`; the quotes
+prevent zsh from expanding the wildcard before `find` runs.
 
 Use this custom template: the stock Guardian Ollama template adds its own judging
 prompt, while this application supplies the criterion from its Rego policy.

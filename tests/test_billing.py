@@ -10,6 +10,7 @@ import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from blockbuster import blockbuster_ctx
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import pytest
@@ -146,6 +147,23 @@ async def test_approved_message_is_read_assessed_and_saved(billing):
     assert packet["invoice"] == invoice
     assert packet["tool"]["args"] == {"invoice_id": 42, "body": BODY}
     assert criterion.strip()
+
+
+async def test_sending_invoice_does_not_block_event_loop(billing):
+    # Use LangGraph dev's detector around the real tool and middleware path.
+    with blockbuster_ctx(scanned_modules=[billing_module]) as detector:
+        # LangGraph dev permits stat calls, including the database existence check.
+        detector.functions["os.stat"].deactivate()
+        messages = await invoke(billing)
+
+    assert messages[-1].status == "success", messages[-1].content
+    files = list(billing.inbox.glob("*.eml"))
+    assert len(files) == 1
+    assert files[0].name in messages[-1].content
+    message = BytesParser(policy=email_policy.default).parsebytes(files[0].read_bytes())
+    assert str(message["To"]) == RECIPIENT
+    assert str(message["Subject"]) == "Your Chinook invoice 42"
+    assert message.get_content().rstrip("\r\n") == BODY
 
 
 @pytest.mark.parametrize("enabled", [None, "false", ""])

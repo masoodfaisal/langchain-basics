@@ -1,5 +1,6 @@
 """Check an invoice explanation before a tool saves it to a local email inbox."""
 
+import asyncio
 from email.message import EmailMessage
 import os
 from pathlib import Path
@@ -63,13 +64,11 @@ async def get_invoice_for_explanation(invoice_id: int) -> dict:
     return invoice
 
 
-@tool
-async def send_invoice_explanation(invoice_id: int, body: str) -> str:
-    """Send an invoice explanation to the local demo inbox as an .eml file."""
-    invoice = await read_invoice(invoice_id)
+def _save_invoice_explanation(invoice_id: int, recipient: str, body: str) -> Path:
+    """Build and save the email in a worker thread, including all file I/O."""
     message = EmailMessage()
     message["From"] = "billing@chinook.example"
-    message["To"] = invoice["email"]
+    message["To"] = recipient
     message["Subject"] = f"Your Chinook invoice {invoice_id}"
     message.set_content(body)
 
@@ -77,6 +76,16 @@ async def send_invoice_explanation(invoice_id: int, body: str) -> str:
     path = BILLING_INBOX / f"{uuid4()}.eml"
     with path.open("xb") as output:
         output.write(message.as_bytes())
+    return path
+
+
+@tool
+async def send_invoice_explanation(invoice_id: int, body: str) -> str:
+    """Send an invoice explanation to the local demo inbox as an .eml file."""
+    invoice = await read_invoice(invoice_id)
+    path = await asyncio.to_thread(
+        _save_invoice_explanation, invoice_id, invoice["email"], body,
+    )
     return f"Invoice explanation saved to the local inbox as {path.name}."
 
 

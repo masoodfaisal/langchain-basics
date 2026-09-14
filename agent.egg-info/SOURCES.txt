@@ -1,5 +1,7 @@
 README.md
 agent.py
+billing.py
+billing_policy.py
 context.py
 db.py
 embeddings.py
@@ -27,8 +29,11 @@ evals/run_simple_agent_eval_offline.py
 evals/simple_agent_dataset.py
 evals/simple_agent_evaluators_offline.py
 evals/simple_agent_llm_judge.py
+policies/billing_guardian.rego
 policies/guardian.rego
 tests/test_auth.py
+tests/test_billing.py
+tests/test_billing_policy.py
 tests/test_checkpointing.py
 tests/test_e2e_memory.py
 tests/test_guardian.py

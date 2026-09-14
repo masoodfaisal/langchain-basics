@@ -1,0 +1,6 @@
+FROM hf.co/ibm-granite/granite-guardian-4.1-8b-GGUF:Q4_K_M
+TEMPLATE """{{- range .Messages }}<|start_of_role|>{{ .Role }}<|end_of_role|>{{ .Content }}<|end_of_text|>{{ "\n" }}{{- end }}<|start_of_role|>assistant<|end_of_role|>"""
+PARAMETER num_ctx 8192
+PARAMETER temperature 0
+PARAMETER stop "<|end_of_text|>"
+PARAMETER stop "<|start_of_role|>"
