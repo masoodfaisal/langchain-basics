@@ -4,7 +4,7 @@ Provides three middleware hooks:
 
 * ``customer_scoping`` enforces per-customer data access *outside* the tool
   implementations. This is the primary security boundary.
-* ``capture_user_message`` snapshots the incoming user text for memory checks,
+* ``capture_user_message`` snapshots the incoming user text for memory and invoice checks,
   before the model or tools run. Customer identity stays in ``UserContext``.
 * ``demo_feedback`` records a LangSmith feedback score after each completed
   agent invocation. It demonstrates how an in-source score appears in the
@@ -60,7 +60,10 @@ logger = logging.getLogger(__name__)
 # Tools that operate on authenticated-customer-scoped data. Non-listed tools
 # (catalog lookups, recommendations) are allowed for anyone.
 ACCOUNT_TOOLS: frozenset[str] = frozenset(
-    {"list_my_orders", "get_invoice_details", "remember", "recall"}
+    {
+        "list_my_orders", "get_invoice_details", "remember", "recall",
+        "get_invoice_for_explanation", "send_invoice_explanation",
+    }
 )
 
 # Feedback scores are numeric in LangSmith. ``demo-value`` is retained as the
@@ -85,7 +88,7 @@ async def capture_user_message(
     """Capture the final incoming user message, never search older history.
 
     This demo accepts text messages only. Always overwrite the snapshot so
-    a turn without user text cannot reuse a previous turn's memory source.
+    a turn without user text cannot reuse a previous turn's source text.
     """
     messages = state.get("messages", [])
     message = messages[-1] if messages else None
@@ -173,7 +176,9 @@ async def customer_scoping(
     # Ownership check for per-invoice lookups. We verify ownership here so
     # that a buggy, replaced, or prompt-injected tool still cannot expose
     # another customer's data.
-    if tool_name == "get_invoice_details":
+    if tool_name in {
+        "get_invoice_details", "get_invoice_for_explanation", "send_invoice_explanation",
+    }:
         invoice_id = request.tool_call["args"].get("invoice_id")
         if invoice_id is None:
             return _deny(request, "Access denied: invoice_id is required.")

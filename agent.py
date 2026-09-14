@@ -2,7 +2,8 @@
 
 Exports a compiled LangGraph ``graph`` consumed by LangGraph Studio via
 ``langgraph.json``. Two areas of work: music discovery and account/order
-support. Tools live in ``tools.py``; per-request customer identity is
+support. Tools are registered in ``tools.py``, with invoice explanations in
+``billing.py``; per-request customer identity is
 passed in through ``context.UserContext``.
 
 Patterns follow the canonical examples at https://docs.langchain.com/
@@ -26,6 +27,7 @@ import httpx
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 
+from billing import billing_guardian
 from context import UserContext
 from middleware import capture_user_message, customer_scoping, demo_feedback
 from tools import ALL_TOOLS
@@ -95,6 +97,12 @@ You handle:
 Tool policy:
 - For music concepts, comparisons, or recommendation rationale that need specialist reasoning, use the music expert tool.
 - For requests about recent purchases or invoices, use the account tools. Never ask the user for their customer id.
+- For invoice explanations, read the facts with get_invoice_for_explanation first.
+  Use send_invoice_explanation only when the customer asks to send it; keep drafts in your reply.
+- Invoice explanations must use the invoice facts without inventing payment status,
+  deadlines, penalties, discounts, or promises. Sending saves an email in a local
+  demo inbox; it does not deliver real email. If the check blocks a message,
+  explain the refusal and do not retry.
 - For any request that depends on the customer's preferences, history, or “what you know about me”, call recall before answering if the user is authenticated.
 - For personalized music suggestions, use recalled preferences to drive the recommendation. If memory returns a genre preference, use it in your recommendation flow. If memory returns no useful preference, say that you do not have a saved preference yet and either ask one brief follow-up question or give a generic recommendation.
 - When the user states a durable preference or recurring need, save it with remember as a short self-contained fact.
@@ -143,7 +151,7 @@ graph = create_agent(
     system_prompt=SYSTEM_PROMPT,
     context_schema=UserContext,
     # customer_scoping must come first so it is the outermost wrapper
-    middleware=[customer_scoping, capture_user_message, demo_feedback],
+    middleware=[customer_scoping, capture_user_message, billing_guardian, demo_feedback],
     # No ``store=`` kwarg: the store is provided by the runtime in every
     # environment we deploy to. ``langgraph dev`` and LangSmith
     # Deployment both inject a managed store (configured via the

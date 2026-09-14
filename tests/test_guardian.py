@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 from langchain.agents import create_agent
@@ -33,6 +34,11 @@ HISTORY = "Earlier actor history that must not reach the judge."
 class ScriptedToolModel(GenericFakeChatModel):
     def bind_tools(self, tools, **kwargs):
         return self
+
+
+@pytest.fixture(autouse=True)
+def enable_guardian(monkeypatch):
+    monkeypatch.setenv("ENABLE_GUARDIAN", "true")
 
 
 @pytest.fixture
@@ -84,7 +90,11 @@ async def gateway(monkeypatch):
         yield state
 
 
-async def test_remember_stores_exact_approved_fact_and_recall_reads_it(gateway):
+@pytest.mark.parametrize("enabled", ["true", " TRUE "])
+async def test_remember_stores_exact_approved_fact_and_recall_reads_it(
+    gateway, monkeypatch, enabled,
+):
+    monkeypatch.setenv("ENABLE_GUARDIAN", enabled)
     result = await tools.remember.coroutine(fact=FACT, runtime=gateway.runtime)
     assert result.startswith("Saved")
     items = await gateway.store.asearch(Memo.namespace(2))
@@ -107,6 +117,31 @@ async def test_remember_stores_exact_approved_fact_and_recall_reads_it(gateway):
     assert write["guardian"] == {"policy_id": POLICY_ID, "intent_match": True}
     assert read["memory"]["operation"] == "search"
     assert "guardian" not in read
+
+
+@pytest.mark.parametrize("enabled", [None, "false", ""])
+async def test_disabled_guardian_saves_and_recalls_without_granite_or_rego(
+    gateway, monkeypatch, enabled,
+):
+    if enabled is None:
+        monkeypatch.delenv("ENABLE_GUARDIAN", raising=False)
+    else:
+        monkeypatch.setenv("ENABLE_GUARDIAN", enabled)
+    evaluate = AsyncMock(side_effect=RuntimeError("policy unavailable"))
+    monkeypatch.setattr(gateway.guardian.rego, "evaluate", evaluate)
+    gateway.model_error = httpx.ReadTimeout("Granite is not running")
+    gateway.runtime.state.pop("source_user_message")
+
+    result = await tools.remember.coroutine(fact=FACT, runtime=gateway.runtime)
+    message = await tools.recall.coroutine(query="music", runtime=gateway.runtime)
+
+    assert result.startswith("Saved")
+    assert FACT in message
+    assert [item.value for item in await gateway.store.asearch(Memo.namespace(2))] == [
+        {"text": FACT},
+    ]
+    evaluate.assert_not_awaited()
+    assert gateway.model_requests == []
 
 
 async def test_granite_receives_only_source_action_and_judging_prompt(gateway):

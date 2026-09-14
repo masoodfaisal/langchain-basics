@@ -94,11 +94,10 @@ class MemoryGuardian:
     ) -> bool:
         """Validate the request, assess writes with Granite, then ask Rego.
 
-        Recall skips Granite. Invalid input or any model/policy error denies.
+        Set ENABLE_GUARDIAN=true to run checks; the default skips them for demos.
+        When enabled, recall skips Granite and any model/policy error denies.
         """
-        ## for demo
-        enbale_guardian = bool(os.getenv("ENABLE_GUARDIAN", "False"))
-        if(enbale_guardian):
+        if os.getenv("ENABLE_GUARDIAN", "false").strip().lower() != "true":
             return True
 
         try:

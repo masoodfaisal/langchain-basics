@@ -1,6 +1,6 @@
 """Tools exposed to the Chinook customer support agent.
 
-Four areas, seven tools:
+Five areas, nine tools:
 
 Music discovery
     * ``find_similar_albums`` - albums that share genres with a given album.
@@ -9,6 +9,10 @@ Music discovery
 Account & order support
     * ``list_my_orders``      - the authenticated customer's recent invoices.
     * ``get_invoice_details`` - line items for one of their invoices.
+
+Invoice explanations (implemented in ``billing.py``)
+    * ``get_invoice_for_explanation`` - invoice facts for composing a message.
+    * ``send_invoice_explanation`` - save the explanation to a local email inbox.
 
 Long-term memory (per-customer, cross-thread)
     * ``remember``            - save a durable fact about the customer.
@@ -19,9 +23,10 @@ LLM delegation
 
 The account and memory tools read ``runtime.context.customer_id`` (see
 ``context.py``) so they never trust a customer id passed in by the model.
-The memory tools use ``runtime.store``, provided by LangGraph. ``remember``
-checks the proposed fact with Granite and Rego before saving; ``recall``
-uses Rego to authorize a search within the customer's namespace.
+The memory tools use ``runtime.store``, provided by LangGraph. With
+``ENABLE_GUARDIAN=true``, ``remember`` checks the proposed fact with Granite
+and Rego before saving; ``recall`` uses Rego to check the search. The default
+skips these checks so the demo can run without Granite.
 The original user text is captured at graph entry in ``runtime.state``;
 customer identity remains in ``runtime.context``.
 
@@ -39,6 +44,7 @@ from langchain.tools import ToolRuntime, tool
 from langchain_openai import ChatOpenAI
 from pydantic import Field
 
+from billing import get_invoice_for_explanation, send_invoice_explanation
 from context import UserContext
 from db import aconnect
 from guardian import MemoryGuardian, MemoryLimit, MemoryText
@@ -416,6 +422,8 @@ ALL_TOOLS = [
     popular_in_genre,
     list_my_orders,
     get_invoice_details,
+    get_invoice_for_explanation,
+    send_invoice_explanation,
     remember,
     recall,
     ask_music_expert,

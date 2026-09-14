@@ -19,6 +19,8 @@ pythonVersion = ">=3.11"
 [tool.setuptools]
 py-modules = [
     "agent",
+    "billing",
+    "billing_policy",
     "context",
     "db",
     "embeddings",
@@ -31,7 +33,7 @@ py-modules = [
 packages = ["evals", "policies"]
 
 [tool.setuptools.package-data]
-policies = ["guardian.rego"]
+policies = ["guardian.rego", "billing_guardian.rego"]
 
 [tool.pytest.ini_options]
 markers = [

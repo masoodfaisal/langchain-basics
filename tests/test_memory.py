@@ -49,6 +49,8 @@ def _runtime(customer_id: int | None, store) -> SimpleNamespace:
 
 @pytest.fixture(autouse=True)
 async def granite_approval(monkeypatch):
+    monkeypatch.setenv("ENABLE_GUARDIAN", "true")
+
     def transport(request):
         return httpx.Response(200, json={"choices": [{
             "finish_reason": "stop",
@@ -175,7 +177,9 @@ async def test_recall_returns_saved_memories_for_owner(store):
     assert out.lstrip().startswith("- ")
 
 
-async def test_recall_does_not_leak_other_customers(store):
+@pytest.mark.parametrize("enabled", ["true", "false"])
+async def test_recall_does_not_leak_other_customers(store, monkeypatch, enabled):
+    monkeypatch.setenv("ENABLE_GUARDIAN", enabled)
     await Memo(store).write(2, "Customer 2's secret preference")
 
     out = await recall.coroutine(
