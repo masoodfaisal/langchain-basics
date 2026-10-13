@@ -74,12 +74,12 @@ can persist across threads without being shared between customers.
 
 ## Setup
 
-1. Install Python 3.13 and ensure `python3.13` is available on `PATH`.
+1. Install Python 3.13 and `uv`.
 
-2. Create the virtual environment:
+2. Create the virtual environment and install dependencies from `pyproject.toml`:
 
    ```bash
-   python3.13 -m venv .venv
+   uv sync --python 3.13
    ```
 
 3. Activate the environment:
@@ -88,11 +88,7 @@ can persist across threads without being shared between customers.
    source .venv/bin/activate
    ```
 
-4. Install the Python dependencies:
-
-   ```bash
-   pip3 install --requirement requirements.txt
-   ```
+Dependencies are declared in `pyproject.toml` and can be added with `uv add`.
 
 Provision the Chinook SQLite database for a fresh checkout:
 

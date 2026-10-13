@@ -1,5 +1,7 @@
 """Export a Marp Markdown deck to an image-backed, Google Slides-ready PPTX.
 
+AI GENERATED
+
 The renderer uses a local headless Firefox installation and an existing
 Marp-generated PPTX as the OOXML shell. It intentionally avoids network access
 and package installation. Speaker-note comments are retained in the PPTX.
@@ -10,6 +12,7 @@ from __future__ import annotations
 import argparse
 import re
 import subprocess
+import sys
 import tempfile
 import textwrap
 import uuid
@@ -150,10 +153,16 @@ def build_html(
 """ % (asset_root.as_uri() + "/", BASE_CSS, css, "\n".join(sections))
 
 
+def firefox_app_bundle(firefox: Path) -> Path | None:
+    for parent in firefox.parents:
+        if parent.suffix == ".app":
+            return parent
+    return None
+
+
 def firefox_screenshot(firefox: Path, html_file: Path, output: Path, profile: Path) -> None:
     profile.mkdir(parents=True, exist_ok=True)
-    command = [
-        str(firefox),
+    arguments = [
         "--headless",
         "--no-remote",
         "--profile",
@@ -164,21 +173,33 @@ def firefox_screenshot(firefox: Path, html_file: Path, output: Path, profile: Pa
         str(output),
         html_file.as_uri(),
     ]
-    try:
-        result = subprocess.run(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=45,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise TimeoutError(
-            f"Firefox did not render {html_file.name} within 45 seconds"
-        ) from exc
-    if result.returncode != 0 or not output.exists():
-        raise RuntimeError(
-            f"Firefox screenshot failed for {html_file.name} (exit {result.returncode})"
-        )
+    commands = [[str(firefox), *arguments]]
+    # macOS TCC can deny a shell-spawned Firefox access to its own profile
+    # state ("Could not find profile folder"). Launching through launchd with
+    # `open -n` gives the new instance its own TCC context instead.
+    bundle = firefox_app_bundle(firefox)
+    if sys.platform == "darwin" and bundle is not None:
+        commands.append(["open", "-n", "-W", "-a", str(bundle), "--args", *arguments])
+
+    last_exit = 0
+    for command in commands:
+        try:
+            result = subprocess.run(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=45,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(
+                f"Firefox did not render {html_file.name} within 45 seconds"
+            ) from exc
+        last_exit = result.returncode
+        if result.returncode == 0 and output.exists():
+            return
+    raise RuntimeError(
+        f"Firefox screenshot failed for {html_file.name} (exit {last_exit})"
+    )
 
 
 def render_slide_images(

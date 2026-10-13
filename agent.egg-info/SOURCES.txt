@@ -10,7 +10,6 @@ memory.py
 middleware.py
 pyproject.toml
 rego_policy.py
-requirements.txt
 tools.py
 agent.egg-info/PKG-INFO
 agent.egg-info/SOURCES.txt
