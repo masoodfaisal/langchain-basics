@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -97,17 +98,171 @@ def test_upsert_dataset_replaces_existing_examples(run_eval_offline: Any) -> Non
     assert client.created_examples["dataset_id"] == "dataset-existing"
 
 
+@pytest.mark.parametrize(
+    ("builder_name", "feedback_key"),
+    [
+        ("_judge_chain", "llm_correctness"),
+        ("_conciseness_chain", "llm_conciseness"),
+    ],
+)
+def test_hosted_judges_upload_gateway_and_secret_reference(
+    run_eval_offline: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    builder_name: str,
+    feedback_key: str,
+) -> None:
+    local_api_key = "test-local-key-not-a-secret"
+    monkeypatch.setattr(run_eval_offline.os, "environ", {
+        "OPENAI_API_KEY": local_api_key,
+        "OPENAI_BASE_URL": "https://local-model.example.invalid/v1",
+    })
+    manifest = getattr(run_eval_offline, builder_name)("gpt-4o-mini")
+    requests: list[dict[str, Any]] = []
+
+    def request(method: str, path: str, **kwargs: Any) -> Any:
+        requests.append({"method": method, "path": path, **kwargs})
+        return SimpleNamespace(json=lambda: {
+            "commit": {"commit_hash": "new-commit", "id": "commit-id"},
+        })
+
+    # Exercise the real SDK upload code without creating an authenticated client.
+    client = SimpleNamespace(
+        _prompt_exists=lambda *args: True,
+        _get_latest_commit_hash=lambda *args: "previous-commit",
+        request_with_retries=request,
+        _get_prompt_url=lambda identifier: identifier,
+    )
+    client.create_commit = lambda *args, **kwargs: (
+        run_eval_offline.Client.create_commit(client, *args, **kwargs)
+    )
+
+    run_eval_offline.Client.push_prompt(
+        client, "test-owner/judge", object=manifest,
+    )
+
+    assert len(requests) == 1
+    assert requests[0]["method"] == "POST"
+    assert requests[0]["path"] == "/commits/test-owner/judge"
+    uploaded = requests[0]["json"]["manifest"]
+    assert uploaded is manifest
+    assert uploaded["kwargs"]["first"]["kwargs"]["schema_"]["properties"][
+        feedback_key
+    ]["type"] == "boolean"
+    model = uploaded["kwargs"]["last"]["kwargs"]["bound"]["kwargs"]
+    assert model["model_name"] == "gpt-4o-mini"
+    assert model["openai_api_base"] == (
+        "https://gateway.smith.langchain.com/openai/v1"
+    )
+    assert model["openai_api_key"] == {
+        "lc": 1,
+        "type": "secret",
+        "id": ["LC_GATEWAY_KEY"],
+    }
+    assert local_api_key not in json.dumps(uploaded)
+
+
+@pytest.mark.parametrize("replace", [False, True], ids=["create", "update"])
+@pytest.mark.parametrize(
+    ("upsert_name", "builder_name", "expected_variables"),
+    [
+        (
+            "_upsert_llm_evaluator",
+            "_judge_chain",
+            {
+                "input": "What is 2 + 2?",
+                "output": "2 + 2 = 4.",
+                "reference": "The answer must be 4.",
+            },
+        ),
+        (
+            "_upsert_conciseness_evaluator",
+            "_conciseness_chain",
+            {"output": "2 + 2 = 4."},
+        ),
+    ],
+)
+async def test_llm_evaluator_mappings_resolve_hosted_run_data(
+    run_eval_offline: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    replace: bool,
+    upsert_name: str,
+    builder_name: str,
+    expected_variables: dict[str, str],
+) -> None:
+    evaluator = SimpleNamespace(id="evaluator-1", type="llm")
+    response = SimpleNamespace(evaluator=evaluator)
+    client = SimpleNamespace(
+        push_prompt=Mock(),
+        get_prompt=Mock(return_value=SimpleNamespace(
+            repo_handle="judge-prompt", last_commit_hash="judge-commit",
+        )),
+        evaluators=SimpleNamespace(
+            create=AsyncMock(return_value=response),
+            update=AsyncMock(return_value=response),
+        ),
+    )
+    monkeypatch.setattr(run_eval_offline, builder_name, Mock(return_value={}))
+    monkeypatch.setattr(
+        run_eval_offline,
+        "_find_evaluator",
+        AsyncMock(return_value=evaluator if replace else None),
+    )
+
+    result, action = await getattr(run_eval_offline, upsert_name)(
+        client, "gpt-4o-mini", replace=replace,
+    )
+
+    assert result is evaluator
+    assert action == ("Updated" if replace else "Created")
+    submitted = client.evaluators.update if replace else client.evaluators.create
+    unused = client.evaluators.create if replace else client.evaluators.update
+    submitted.assert_awaited_once()
+    unused.assert_not_awaited()
+    mapping = submitted.call_args.kwargs["llm_evaluator"]["variable_mapping"]
+
+    # The hosted runtime exposes these singular roots, as verified by its
+    # /runs/rules/validate endpoint. Plural inputs/outputs silently become None.
+    hosted_context = {
+        "input": {"question": "What is 2 + 2?"},
+        "output": {"answer": "2 + 2 = 4."},
+        "reference": {"reference_answer": "The answer must be 4."},
+    }
+    resolved_variables = {}
+    for variable, path in mapping.items():
+        source, key = path.split(".", 1)
+        resolved_variables[variable] = hosted_context.get(source, {}).get(key)
+    assert resolved_variables == expected_variables
+
+
+@pytest.mark.parametrize("agent_id", [None, "fm-demo-app"])
 def test_amain_configures_evaluators_before_running_experiment(
     run_eval_offline: Any,
     monkeypatch: pytest.MonkeyPatch,
+    agent_id: str | None,
 ) -> None:
     events: list[str] = []
     client = SimpleNamespace(close=lambda **kwargs: events.append("close"))
     evaluator = SimpleNamespace(id="evaluator-1", name="judge")
 
     monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
     monkeypatch.setattr(run_eval_offline, "Client", lambda: client)
     monkeypatch.setattr(run_eval_offline, "CODE_EVALUATORS", {})
+
+    def resolve_agent(selected_client: Any, selected_agent: str) -> str:
+        assert selected_client is client
+        assert selected_agent == agent_id
+        events.append("agent")
+        return "agent-tag"
+
+    def associate_dataset(selected_client: Any, dataset_id: str, tag_id: str) -> bool:
+        assert selected_client is client
+        assert (dataset_id, tag_id) == ("dataset-1", "agent-tag")
+        events.append("association")
+        return True
+
+    monkeypatch.setattr(run_eval_offline, "get_agent_tag_value_id", resolve_agent)
+    monkeypatch.setattr(run_eval_offline, "ensure_dataset_agent_tag", associate_dataset)
 
     def upsert_dataset(selected_client: Any, name: str) -> tuple[str, str]:
         events.append("dataset")
@@ -151,6 +306,7 @@ def test_amain_configures_evaluators_before_running_experiment(
 
     monkeypatch.setattr(run_eval_offline, "aevaluate", evaluate)
     args = SimpleNamespace(
+        agent=agent_id,
         dataset_name="my-dataset",
         judge_model="judge-model",
         experiment_prefix="my-experiment",
@@ -159,7 +315,9 @@ def test_amain_configures_evaluators_before_running_experiment(
 
     assert asyncio.run(run_eval_offline.amain(args)) == 0
     assert events == [
+        *(["agent"] if agent_id else []),
         "dataset",
+        *(["association"] if agent_id else []),
         "evaluator",
         "evaluator",
         "binding",
@@ -167,3 +325,27 @@ def test_amain_configures_evaluators_before_running_experiment(
         "experiment",
         "close",
     ]
+
+
+def test_unknown_agent_stops_before_dataset_replacement(
+    run_eval_offline: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    client = SimpleNamespace(close=lambda **kwargs: events.append("close"))
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
+    monkeypatch.setattr(run_eval_offline, "Client", lambda: client)
+
+    def resolve_agent(*args: Any) -> str:
+        raise ValueError("Agent not found")
+
+    monkeypatch.setattr(run_eval_offline, "get_agent_tag_value_id", resolve_agent)
+    monkeypatch.setattr(
+        run_eval_offline,
+        "_upsert_dataset",
+        lambda *args: pytest.fail("Must resolve the Agent before replacing examples"),
+    )
+    with pytest.raises(ValueError, match="Agent not found"):
+        asyncio.run(run_eval_offline.amain(SimpleNamespace(agent="missing-agent")))
+
+    assert events == ["close"]

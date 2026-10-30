@@ -16,6 +16,9 @@ from middleware import demo_feedback
 
 
 # Configure the main agent model.
+# Reasoning models such as gpt-6.1-sol reject function tools over chat
+# completions and reject any non-default temperature, so use the Responses
+# API and leave temperature unset.
 verify_ssl = os.getenv("OPENAI_VERIFY_SSL", "true").strip().lower() not in {
     "false",
     "0",
@@ -25,8 +28,8 @@ model = ChatOpenAI(
     openai_api_key=os.getenv("OPENAI_API_KEY", "sk-123456"),
     openai_api_base=os.getenv("OPENAI_BASE_URL", "http://ai-gateway:4000"),
     model_name=os.getenv("MODEL_NAME", "llama-distributed"),
-    temperature=0.01,
     http_async_client=httpx.AsyncClient(verify=verify_ssl),
+    use_responses_api=True,
 )
 
 
@@ -45,7 +48,6 @@ music_expert_model = ChatOpenAI(
     model_name=os.getenv(
         "TOOL_LLM_MODEL", os.getenv("MODEL_NAME", "llama-distributed")
     ),
-    temperature=0.01,
     http_async_client=httpx.AsyncClient(verify=tool_verify_ssl),
 )
 

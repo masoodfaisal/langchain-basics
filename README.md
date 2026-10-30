@@ -423,38 +423,126 @@ pytest -m e2e
 The canonical examples in `evals/dataset.py` cover music discovery, account
 lookups, authentication failures, and cross-customer data isolation.
 
-Run a dataset-backed offline experiment:
+Run the commands below from the repository root using `uv`. There is no need to
+activate `.venv` manually. Both runners load the root `.env` configuration.
+
+Both workflows require `LANGSMITH_API_KEY`. Use the same LangSmith workspace and
+regional API endpoint as the target Agent. The offline workflow also requires
+the database and model setup described above. Its hosted LLM judges need their
+model provider configured in the LangSmith workspace.
+
+For an Agent-based workspace, use the exact tracing project name belonging to
+the intended Agent environment (Local, Development, Staging, or Production).
+LangSmith exposes this compatibility name as `tracer_session_name`; retrieve it
+from the existing Agent rather than deriving it from the Agent's display name.
+See [Agent environment project configuration](https://docs.langchain.com/langsmith/create-an-agent#use-an-environment-project).
+
+Configure tracing for the running agent to use that same destination:
 
 ```bash
-PYTHONPATH=. .venv/bin/python evals/run-eval-offline.py --replace
+export LANGSMITH_TRACING=true
+export LANGSMITH_WORKSPACE_ID="<workspace-id>"
+export LANGSMITH_PROJECT="<agent-environment-project-name>"
 ```
 
-Upload and attach the online production guardrails:
+Set `LANGSMITH_API_KEY` and the model credentials in your shell without adding
+their values to this README. For a project-based workspace, use the existing
+tracing project name in place of the Agent environment project name.
+
+### Offline evaluators
+
+Create the reusable offline evaluators, attach them to the dataset, and run an
+experiment:
 
 ```bash
-PYTHONPATH=. .venv/bin/python evals/run-eval-online.py --project agent --replace
+uv run python evals/run-eval-offline.py \
+  --agent "<agent-id>" \
+  --dataset-name chinook-support-bot \
+  --replace
 ```
 
-Both workflows require `LANGSMITH_API_KEY`. The offline workflow scores tool
-trajectory, required output, data leakage, PII, correctness, and conciseness.
-The online evaluator checks live traces for valid responses, appropriate account
-tool use, internal-detail exposure, PII, and known invoice-data leakage.
+The runner creates four code evaluators for tool trajectory, required output,
+data leakage, and PII, plus two LLM judges for correctness and conciseness.
+It invokes the agent locally, so a running `langgraph dev` server is not required.
+Dataset-bound evaluators score the experiment in LangSmith.
 
+Replace `<agent-id>` with the existing LangSmith Agent ID, for example
+`fm-demo-app`. The runner adds that Agent's resource tag to the dataset so the
+dataset and its offline evaluators appear under the Agent. This option defaults
+to `LANGSMITH_AGENT_ID` if set; omit it for a project-based workspace.
+
+**Dataset replacement:** every invocation replaces all existing examples in the
+named dataset with the examples from `evals/dataset.py`, even without
+`--replace`. Choose a different `--dataset-name` to preserve manually curated
+examples. The `--replace` flag controls updates to existing evaluator definitions.
+
+### Online evaluators
+
+Upload and attach the online guardrails to the existing tracing project that
+receives your agent's live traces:
 
 ```bash
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_TRACING=true
-LANGSMITH_PROJECT="XXX"
-LANGSMITH_WORKSPACE_ID=XXXXX
-OPENAI_BASE_URL=XXX
-EMBEDDING_MODEL_NAME=BAAI/bge-base-en-v1.5
-EMBEDDING_CACHE_DIR=.cache/fastembed
-MODEL_NAME=gpt-5.4-mini
-LANGSMITH_DEPLOYMENT_NAME='XXX'
-OPENAI_BASE_URL=XXXX
-# Set LANGSMITH_API_KEY in your shell, not here.
-# Set OPENAI_API_KEY in your shell, not here.
+uv run python evals/run-eval-online.py \
+  --project "<agent-environment-project-name>" \
+  --sampling-rate 1 \
+  --replace
 ```
+
+Replace the project placeholder with the same destination used by the running
+agent. The runner requires that project to exist; it does not create it.
+It creates `chinook-online-guardrails` and enables its rule at 100% sampling.
+The evaluator checks new traces for a final response, appropriate account tool
+use, exposed internal details or tool names, and known invoice-data leakage.
+This command configures evaluation; it does not invoke the agent or run a dataset
+experiment.
+
+### Show evaluators under a LangSmith Agent
+
+Creating evaluator definitions and associating them with an Agent are separate
+steps. The offline runner's `--agent` option links its dataset to an existing
+Agent. The online runner's `--project` option attaches its evaluator to an
+existing environment's tracing project. Neither command creates an Agent.
+
+| Evaluators | Required association |
+| --- | --- |
+| Offline | Evaluator → dataset → Agent |
+| Online | Evaluator → Agent environment |
+
+If the dataset and evaluators already exist but are missing under the Agent,
+link the existing dataset without rerunning the offline experiment:
+
+```bash
+uv run python -m evals.agent_associations \
+  --agent fm-demo-app \
+  --dataset-name chinook-support-bot
+```
+
+Use your exact Agent ID and dataset name. This command only adds the Agent's
+existing resource tag to the dataset. It preserves examples, existing tags,
+evaluator definitions, and run rules. Repeating it makes no changes once the
+association exists. Offline evaluators already attached to that dataset then
+appear under the Agent automatically.
+
+1. **Offline:** refresh the Agent's datasets and evaluators views. For manual
+   linking, open **Settings → Resource tags** and assign the dataset to the
+   existing **Agent** tag value through **Assign resources**. Use the Agent's
+   actual tag; a custom tag with a matching name does not create the association.
+2. **Online:** open the **Agent → Tracing**, select the intended environment,
+   and open **Evaluators**. The online evaluator should appear when the runner
+   targets that environment's tracing project. To attach an existing evaluator
+   through the UI, choose **+ Evaluator → Attach an existing evaluator** and
+   select `chinook-online-guardrails`.
+3. **Check results:** view offline scores in the dataset's experiments. Invoke
+   the agent to create new traces in the selected environment, then check their
+   feedback and the online evaluator's logs after processing completes.
+
+`LANGSMITH_PROJECT` selects the trace destination. It does not associate an
+offline dataset with an Agent. Evaluator names and experiment metadata also do
+not create that association.
+
+See [Manage evaluators](https://docs.langchain.com/langsmith/evaluators) and
+[Resource tags](https://docs.langchain.com/langsmith/set-up-resource-tags) for the
+LangSmith UI and API workflows.
 
 # LangChain Agent Building Skill
 https://github.com/langchain-ai/langchain-skills

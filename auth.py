@@ -174,7 +174,7 @@ async def scope_threads_to_authenticated_user(
     metadata = value.setdefault("metadata", {})
     metadata.update(filters)
 
-    # TODO: optionally you can add customer_id from WT claims to the context
+    # TODO: optionally you can add customer_id from JWT claims to the context
     # if ctx.action == "create_run":
     #     customer_id = (
     #         ctx.user["customer_id"]

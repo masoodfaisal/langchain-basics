@@ -33,8 +33,31 @@ def final_text(outputs: dict[str, Any]) -> str:
             else None
         )
         if role in {"ai", "assistant"} and content:
-            return str(content)
+            return _content_text(message, content)
     return ""
+
+
+def _content_text(message: Any, content: Any) -> str:
+    """Return plain text from string or content-block message content.
+
+    The Responses API returns ``content`` as a list of blocks (reasoning,
+    text, ...). Prefer the message's ``text`` property, which joins only
+    the text blocks, and fall back to joining text blocks by hand for
+    plain dict messages.
+    """
+    text = getattr(message, "text", None)
+    if isinstance(text, str) and text:
+        return text
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block if isinstance(block, str) else str(block.get("text", ""))
+            for block in content
+            if isinstance(block, str)
+            or (isinstance(block, dict) and block.get("type") == "text")
+        )
+    return str(content)
 
 
 def pii_counts(text: str) -> dict[str, int]:

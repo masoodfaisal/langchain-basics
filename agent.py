@@ -63,8 +63,11 @@ model = ChatOpenAI(
     openai_api_key=OPENAI_API_KEY,
     openai_api_base=OPENAI_BASE_URL,
     model_name=MODEL_NAME,
-    temperature=0.01,
+    # temperature=0.01,
     http_async_client=_http_async_client,
+    use_responses_api=True,
+    reasoning_effort=os.getenv("REASONING_EFFORT") or None,
+
 )
 
 

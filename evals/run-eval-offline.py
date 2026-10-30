@@ -2,7 +2,7 @@
 
 Run from the project root:
 
-    .venv/bin/python evals/run-eval-offline.py --replace
+    uv run python evals/run-eval-offline.py --agent fm-demo-app --replace
 
 Each run synchronizes the dataset from ``evals/dataset.py``, configures its
 reusable evaluators, and runs the agent against every example. LangSmith
@@ -20,9 +20,11 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+from langchain_core.load import dumpd
 from langchain_core.prompts.structured import StructuredPrompt
 from langchain_openai import ChatOpenAI
 from langsmith import Client, aevaluate
+from langsmith.client import prep_obj_for_push
 from langsmith.utils import LangSmithConflictError
 from pydantic import BaseModel, Field
 
@@ -32,6 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from evals.dataset import to_langsmith_examples
 from context import UserContext
+from evals.agent_associations import get_agent_tag_value_id, ensure_dataset_agent_tag
 from evals.helpers import final_text, pii_counts
 
 
@@ -185,7 +188,29 @@ async def _upsert_code_evaluator(
     return evaluator, action
 
 
-def _judge_chain(model_name: str) -> Any:
+def _hosted_judge_manifest(
+    prompt: StructuredPrompt,
+    model_name: str,
+) -> dict[str, Any]:
+    """Serialize a judge with the gateway configuration used by hosted evaluators."""
+    model = ChatOpenAI(
+        model=model_name,
+        temperature=0,
+        base_url="https://gateway.smith.langchain.com/openai/v1",
+    )
+    manifest = dumpd(prep_obj_for_push(prompt | model))
+    model_kwargs = manifest["kwargs"]["last"]["kwargs"]["bound"]["kwargs"]
+    # ChatOpenAI defaults to OPENAI_API_KEY when serializing. Hosted judges
+    # must resolve the gateway's secret reference, not the provider's key.
+    model_kwargs["openai_api_key"] = {
+        "lc": 1,
+        "type": "secret",
+        "id": ["LC_GATEWAY_KEY"],
+    }
+    return manifest
+
+
+def _judge_chain(model_name: str) -> dict[str, Any]:
     prompt = StructuredPrompt.from_messages_and_schema(
         [
             (
@@ -203,10 +228,10 @@ def _judge_chain(model_name: str) -> Any:
         ],
         schema=CorrectnessFeedback.model_json_schema(),
     )
-    return prompt | ChatOpenAI(model=model_name, temperature=0)
+    return _hosted_judge_manifest(prompt, model_name)
 
 
-def _conciseness_chain(model_name: str) -> Any:
+def _conciseness_chain(model_name: str) -> dict[str, Any]:
     prompt = StructuredPrompt.from_messages_and_schema(
         [
             (
@@ -219,7 +244,7 @@ def _conciseness_chain(model_name: str) -> Any:
         ],
         schema=ConcisenessFeedback.model_json_schema(),
     )
-    return prompt | ChatOpenAI(model=model_name, temperature=0)
+    return _hosted_judge_manifest(prompt, model_name)
 
 
 async def _upsert_llm_evaluator(
@@ -243,8 +268,9 @@ async def _upsert_llm_evaluator(
         "prompt_repo_handle": prompt.repo_handle,
         "commit_hash_or_tag": prompt.last_commit_hash,
         "variable_mapping": {
-            "input": "inputs.question",
-            "output": "outputs.answer",
+            # Hosted evaluator paths use singular input/output roots.
+            "input": "input.question",
+            "output": "output.answer",
             "reference": "reference.reference_answer",
         },
     }
@@ -295,7 +321,7 @@ async def _upsert_conciseness_evaluator(
     configuration = {
         "prompt_repo_handle": prompt.repo_handle,
         "commit_hash_or_tag": prompt.last_commit_hash,
-        "variable_mapping": {"output": "outputs.answer"},
+        "variable_mapping": {"output": "output.answer"},
     }
     existing = await _find_evaluator(client, CONCISENESS_EVALUATOR_NAME)
     if existing is None:
@@ -395,8 +421,15 @@ async def amain(args: argparse.Namespace) -> int:
         return 2
     client = Client()
     try:
+        # Resolve the existing Agent before replacing any dataset examples.
+        agent_tag_id = (
+            get_agent_tag_value_id(client, args.agent) if args.agent else None
+        )
         dataset_id, dataset_action = _upsert_dataset(client, args.dataset_name)
         print(f"{dataset_action} dataset {args.dataset_name!r} ({dataset_id}).")
+        if agent_tag_id:
+            ensure_dataset_agent_tag(client, dataset_id, agent_tag_id)
+            print(f"Dataset associated with Agent {args.agent!r}.")
 
         evaluators: list[tuple[Any, str]] = []
         for name, function_name in CODE_EVALUATORS.items():
@@ -438,6 +471,11 @@ async def amain(args: argparse.Namespace) -> int:
 def main() -> int:
     _load_env()
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--agent",
+        default=os.getenv("LANGSMITH_AGENT_ID"),
+        help="Existing LangSmith Agent ID to associate with the dataset and its evaluators.",
+    )
     parser.add_argument(
         "--dataset-name",
         default=os.getenv("CHINOOK_DATASET_NAME", DEFAULT_DATASET_NAME),
